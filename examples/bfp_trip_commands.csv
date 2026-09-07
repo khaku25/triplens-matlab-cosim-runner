@@ -1,0 +1,2 @@
+sequence,time_s,equipment_id,equipment_label,command,command_value,unit,execution_layer,model_input,feedback_tag,status,note
+1,300,FWP-HP,HP feedwater pump,TRIP,0,BOOL,THERMO_ADAPTER,FWP_HP_TRIP,TSP.DRUM.HP.FW_FLOW,QUEUED,Physical co-simulation BFP trip command
