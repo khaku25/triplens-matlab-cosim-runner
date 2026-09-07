@@ -6,7 +6,7 @@ if nargin < 1 || strlength(string(mode)) == 0
 end
 mode = lower(string(mode));
 
-repoRoot = fileparts(fileparts(mfilename("fullpath")));
+repoRoot = resolveRepoRoot();
 outDir = fullfile(repoRoot,"outputs");
 if ~isfolder(outDir), mkdir(outDir); end
 addpath(fullfile(repoRoot,"matlab"),"-begin");
@@ -67,20 +67,10 @@ fprintf("PASS: %s\n",mode);
 end
 
 function report = check_bfp_wrapper_inputs(report)
+repoRoot = resolveRepoRoot();
 root = string(getenv("TRIPLENS_THERMOSYSPRO_ROOT"));
-repoRoot = fileparts(fileparts(mfilename("fullpath")));
 if strlength(root)==0
-    vendorCandidates = [fullfile(repoRoot,"vendor","ThermoSysPro"); fullfile(repoRoot,"vendor","ThermoSysPro","ThermoSysPro")];
-    for k=1:numel(vendorCandidates)
-        if isfile(fullfile(vendorCandidates(k),"package.mo")) || isfile(fullfile(vendorCandidates(k),"ThermoSysPro","package.mo"))
-            root = vendorCandidates(k); break;
-        end
-    end
-end
-if strlength(root)==0
-    report.Status = "FAIL";
-    report.Message = "TRIPLENS_THERMOSYSPRO_ROOT is not set and no vendored ThermoSysPro library was found.";
-    write_and_fail(report);
+    root = fullfile(repoRoot,"vendor","ThermoSysPro");
 end
 
 packageFile = fullfile(root,"ThermoSysPro","package.mo");
@@ -139,6 +129,15 @@ else
 end
 end
 
+function root = resolveRepoRoot()
+raw = getenv('TRIPLENS_COSIM_REPO_ROOT');
+if ~isempty(raw) && isfolder(raw)
+    root = raw;
+else
+    root = fileparts(fileparts(mfilename("fullpath")));
+end
+end
+
 function writeReport(outDir,report)
 json = jsonencode(report,PrettyPrint=true);
 fid = fopen(fullfile(outDir,"environment_report.json"),"w");
@@ -149,7 +148,7 @@ fprintf("%s\n",json);
 end
 
 function write_and_fail(report)
-repoRoot = fileparts(fileparts(mfilename("fullpath")));
+repoRoot = resolveRepoRoot();
 outDir = fullfile(repoRoot,"outputs");
 if ~isfolder(outDir), mkdir(outDir); end
 json = jsonencode(report,PrettyPrint=true);
