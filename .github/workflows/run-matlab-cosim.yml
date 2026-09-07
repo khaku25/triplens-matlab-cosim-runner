@@ -37,7 +37,7 @@ permissions:
 
 concurrency:
   group: triplens-matlab-cosim-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   matlab-cosim:
