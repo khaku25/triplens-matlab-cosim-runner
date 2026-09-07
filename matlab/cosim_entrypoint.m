@@ -37,14 +37,25 @@ switch mode
 
     case "bfp-cosim"
         report = check_bfp_wrapper_inputs(report);
-        tripTime = envNumber("TRIPLENS_BFP_TRIP_TIME",300);
+        commandFile = string(getenv("TRIPLENS_COMMAND_FILE"));
+        if strlength(commandFile)==0
+            commandFile = fullfile(repoRoot,"examples","bfp_trip_commands.csv");
+        elseif ~isfile(commandFile)
+            commandFile = fullfile(repoRoot,commandFile);
+        end
+        cmd = read_bfp_trip_command(commandFile);
+        requestedTripTime = envNumber("TRIPLENS_BFP_TRIP_TIME",cmd.Time_s);
+        if abs(requestedTripTime-cmd.Time_s)>1e-9
+            fprintf("Workflow trip-time override %.6g s replaces command-file time %.6g s.\n",requestedTripTime,cmd.Time_s);
+        end
         rampDuration = envNumber("TRIPLENS_BFP_RAMP_DURATION",2);
         stopTime = envNumber("TRIPLENS_STOP_TIME",1000);
         intervals = envNumber("TRIPLENS_INTERVALS",1000);
-        physics = run_bfp_physical_cosim("TripTime",tripTime,"RampDuration",rampDuration, ...
+        physics = run_bfp_physical_cosim("TripTime",requestedTripTime,"RampDuration",rampDuration, ...
             "StopTime",stopTime,"Intervals",intervals);
         report.Status = "PASS";
-        report.Message = "MATLAB launched ThermoSysPro physical BFP trip and verified pump/feedwater response.";
+        report.Message = "ECMS FWP-HP TRIP command was adapted into a real ThermoSysPro HP BFP physical trip.";
+        report.ECMSCommand = cmd;
         report.Physics = physics;
 
     otherwise
