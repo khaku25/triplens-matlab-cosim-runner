@@ -14,9 +14,14 @@ assert(opt.TripTime < opt.StopTime,"TripLens:BadTripTime","TripTime must be befo
 repoRoot = resolveRepoRoot();
 outDir = fullfile(repoRoot,"outputs");
 buildDir = fullfile(repoRoot,"build","bfp_physical");
+omHome = fullfile(repoRoot,"omhome");
+omAppData = fullfile(omHome,"AppData","Roaming");
+omLocalAppData = fullfile(omHome,"AppData","Local");
 if ~isfolder(outDir), mkdir(outDir); end
 if isfolder(buildDir), rmdir(buildDir,"s"); end
 mkdir(buildDir);
+if ~isfolder(omAppData), mkdir(omAppData); end
+if ~isfolder(omLocalAppData), mkdir(omLocalAppData); end
 
 libraryRoot = resolveThermoSysProRoot(repoRoot);
 packageFile = fullfile(libraryRoot,"package.mo");
@@ -28,6 +33,8 @@ mosFile = fullfile(buildDir,"run_bfp_physical.mos");
 resultBase = "TripLens_BFP_PhysicalTrip";
 mos = compose([ ...
     'setCommandLineOptions("--matchingAlgorithm=PFPlusExt --indexReductionMethod=dynamicStateSelection");\n' ...
+    'loadModel(Modelica,{"4.0.0"});\n' ...
+    'getErrorString();\n' ...
     'loadFile("%s");\n' ...
     'getErrorString();\n' ...
     'loadFile("%s");\n' ...
@@ -38,6 +45,17 @@ mos = compose([ ...
     'getErrorString();\n'], ...
     slash(packageFile), slash(wrapperFile), opt.StopTime, round(opt.Intervals), resultBase, opt.TripTime, opt.RampDuration);
 writeText(mosFile,mos);
+
+% OpenModelica on Windows uses user profile paths for its package manager.
+% Force those paths to an ASCII-only workspace so Korean Windows usernames do not break iconv/file IO.
+oldHome = getenv('HOME'); oldUserProfile = getenv('USERPROFILE');
+oldAppData = getenv('APPDATA'); oldLocalAppData = getenv('LOCALAPPDATA');
+envCleanup = onCleanup(@() restoreOmEnv(oldHome,oldUserProfile,oldAppData,oldLocalAppData));
+setenv('HOME',omHome);
+setenv('USERPROFILE',omHome);
+setenv('APPDATA',omAppData);
+setenv('LOCALAPPDATA',omLocalAppData);
+fprintf("OpenModelica ASCII HOME: %s\n",omHome);
 
 old = pwd;
 cleanup = onCleanup(@() cd(old));
@@ -53,7 +71,9 @@ end
 csvFile = fullfile(buildDir,resultBase + "_res.csv");
 if ~isfile(csvFile)
     files = dir(fullfile(buildDir,"*.csv"));
-    assert(~isempty(files),"TripLens:MissingResult","OpenModelica completed but no CSV result was produced.");
+    if isempty(files)
+        error("TripLens:MissingResult","OpenModelica completed but no CSV result was produced. See outputs/openmodelica_bfp.log");
+    end
     csvFile = fullfile(files(1).folder,files(1).name);
 end
 copyfile(csvFile,fullfile(outDir,"bfp_physical_result.csv"));
@@ -69,6 +89,7 @@ preMask = t >= max(0,opt.TripTime-20) & t < opt.TripTime;
 postMask = t >= min(opt.StopTime,opt.TripTime+opt.RampDuration+5) & t <= min(opt.StopTime,opt.TripTime+opt.RampDuration+30);
 assert(any(preMask)&&any(postMask),"TripLens:InsufficientWindow","Simulation result does not cover pre/post trip windows.");
 
+rpm = T.("hpBfpRpm"); fw = T.("hpFeedwaterFlow"); dl = T.("hpDrumLevel"); dp = T.("hpDrumPressure");
 report = struct;
 report.Status = "PASS";
 report.Engine = "MATLAB master + OpenModelica ThermoSysPro 4.2";
@@ -77,14 +98,14 @@ report.TripMechanism = "HP BFP rpm ramp 1400 -> 0 using native StaticCentrifugal
 report.TripTime_s = opt.TripTime;
 report.RampDuration_s = opt.RampDuration;
 report.StopTime_s = opt.StopTime;
-report.PreBfpRpm = median(T.("hpBfpRpm")(preMask),"omitnan");
-report.PostBfpRpm = median(T.("hpBfpRpm")(postMask),"omitnan");
-report.PreFeedwaterFlow_kg_s = median(T.("hpFeedwaterFlow")(preMask),"omitnan");
-report.PostFeedwaterFlow_kg_s = median(T.("hpFeedwaterFlow")(postMask),"omitnan");
-report.PreDrumLevel_m = median(T.("hpDrumLevel")(preMask),"omitnan");
-report.PostDrumLevel_m = median(T.("hpDrumLevel")(postMask),"omitnan");
-report.PreDrumPressure_Pa = median(T.("hpDrumPressure")(preMask),"omitnan");
-report.PostDrumPressure_Pa = median(T.("hpDrumPressure")(postMask),"omitnan");
+report.PreBfpRpm = median(rpm(preMask),"omitnan");
+report.PostBfpRpm = median(rpm(postMask),"omitnan");
+report.PreFeedwaterFlow_kg_s = median(fw(preMask),"omitnan");
+report.PostFeedwaterFlow_kg_s = median(fw(postMask),"omitnan");
+report.PreDrumLevel_m = median(dl(preMask),"omitnan");
+report.PostDrumLevel_m = median(dl(postMask),"omitnan");
+report.PreDrumPressure_Pa = median(dp(preMask),"omitnan");
+report.PostDrumPressure_Pa = median(dp(postMask),"omitnan");
 report.RpmTripVerified = report.PreBfpRpm > 1000 && report.PostBfpRpm < 100;
 report.FeedwaterResponded = abs(report.PostFeedwaterFlow_kg_s-report.PreFeedwaterFlow_kg_s) > 1e-6;
 report.DrumResponded = abs(report.PostDrumLevel_m-report.PreDrumLevel_m) > 1e-8 || abs(report.PostDrumPressure_Pa-report.PreDrumPressure_Pa) > 1;
@@ -111,33 +132,17 @@ if isfile(vendorPackage)
     fprintf("Using vendored ThermoSysPro: %s\n",root);
     return;
 end
-
 raw = getenv('TRIPLENS_THERMOSYSPRO_ROOT');
 if ~isempty(raw)
-    directPackage = fullfile(raw,'package.mo');
-    nestedLibrary = fullfile(raw,'ThermoSysPro');
-    nestedPackage = fullfile(nestedLibrary,'package.mo');
-    fprintf("Checking TRIPLENS_THERMOSYSPRO_ROOT: %s\n",raw);
-    if isfile(directPackage)
-        root = raw;
-        return;
-    elseif isfile(nestedPackage)
-        root = nestedLibrary;
-        return;
-    end
+    directPackage = fullfile(raw,'package.mo'); nestedLibrary = fullfile(raw,'ThermoSysPro'); nestedPackage = fullfile(nestedLibrary,'package.mo');
+    if isfile(directPackage), root = raw; return; elseif isfile(nestedPackage), root = nestedLibrary; return; end
 end
-
-error("TripLens:ThermoSysProNotFound", ...
-    "ThermoSysPro package.mo not found. Expected vendored file: %s",vendorPackage);
+error("TripLens:ThermoSysProNotFound","ThermoSysPro package.mo not found. Expected vendored file: %s",vendorPackage);
 end
 
 function root = resolveRepoRoot()
 raw = getenv('TRIPLENS_COSIM_REPO_ROOT');
-if ~isempty(raw) && isfolder(raw)
-    root = raw;
-else
-    root = fileparts(fileparts(mfilename("fullpath")));
-end
+if ~isempty(raw) && isfolder(raw), root = raw; else, root = fileparts(fileparts(mfilename("fullpath"))); end
 end
 
 function exe = resolveOmc()
@@ -151,7 +156,11 @@ for pat = roots'
     d = dir(pat);
     if ~isempty(d), exe = fullfile(d(1).folder,d(1).name); return; end
 end
-error("TripLens:OmcNotFound","OpenModelica omc.exe was not found on this PC. Install OpenModelica or add its bin folder to PATH.");
+error("TripLens:OmcNotFound","OpenModelica omc.exe was not found on this PC.");
+end
+
+function restoreOmEnv(h,u,a,l)
+setenv('HOME',h); setenv('USERPROFILE',u); setenv('APPDATA',a); setenv('LOCALAPPDATA',l);
 end
 
 function s = slash(path)
@@ -159,8 +168,5 @@ s = replace(string(path),"\","/");
 end
 
 function writeText(file,text)
-fid = fopen(file,"w");
-assert(fid>=0,"TripLens:WriteFailed","Cannot write %s",file);
-c = onCleanup(@() fclose(fid));
-fwrite(fid,char(text),"char");
+fid = fopen(file,"w"); assert(fid>=0,"TripLens:WriteFailed","Cannot write %s",file); c = onCleanup(@() fclose(fid)); fwrite(fid,char(text),"char");
 end
