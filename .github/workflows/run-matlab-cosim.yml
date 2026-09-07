@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: Select validation or co-simulation stage
+        description: Select validation or physical co-simulation stage
         required: true
         type: choice
         default: smoke
@@ -12,6 +12,22 @@ on:
           - smoke
           - bfp-wrapper-check
           - bfp-cosim
+      bfp_trip_time_s:
+        description: HP BFP trip start time (bfp-cosim)
+        required: true
+        default: "300"
+      bfp_ramp_duration_s:
+        description: HP BFP 1400 to 0 rpm ramp duration (bfp-cosim)
+        required: true
+        default: "2"
+      stop_time_s:
+        description: ThermoSysPro simulation stop time
+        required: true
+        default: "1000"
+      intervals:
+        description: ThermoSysPro output intervals
+        required: true
+        default: "1000"
 
 permissions:
   contents: read
@@ -23,7 +39,7 @@ concurrency:
 jobs:
   matlab-cosim:
     runs-on: [self-hosted, Windows, X64]
-    timeout-minutes: 120
+    timeout-minutes: 180
 
     steps:
       - name: Check out co-sim repository
@@ -35,11 +51,17 @@ jobs:
           Write-Host "Runner: $env:RUNNER_NAME"
           Write-Host "Machine: $env:COMPUTERNAME"
           Write-Host "Workspace: $env:GITHUB_WORKSPACE"
+          $omc = Get-Command omc.exe -ErrorAction SilentlyContinue
+          if ($omc) { Write-Host "OpenModelica: $($omc.Source)" } else { Write-Host "OpenModelica: not on PATH (MATLAB will also search standard install folders)" }
 
       - name: Run on installed MATLAB
         shell: powershell
         env:
           TRIPLENS_COSIM_MODE: ${{ inputs.mode }}
+          TRIPLENS_BFP_TRIP_TIME: ${{ inputs.bfp_trip_time_s }}
+          TRIPLENS_BFP_RAMP_DURATION: ${{ inputs.bfp_ramp_duration_s }}
+          TRIPLENS_STOP_TIME: ${{ inputs.stop_time_s }}
+          TRIPLENS_INTERVALS: ${{ inputs.intervals }}
         run: |
           .\scripts\run_installed_matlab.ps1 -Mode "$env:TRIPLENS_COSIM_MODE"
 
@@ -50,5 +72,6 @@ jobs:
           name: triplens-matlab-cosim-${{ github.run_number }}
           path: |
             outputs/
+            build/bfp_physical/*.mos
           if-no-files-found: warn
           retention-days: 30
