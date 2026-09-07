@@ -9,6 +9,7 @@ mode = lower(string(mode));
 repoRoot = fileparts(fileparts(mfilename("fullpath")));
 outDir = fullfile(repoRoot,"outputs");
 if ~isfolder(outDir), mkdir(outDir); end
+addpath(fullfile(repoRoot,"matlab"),"-begin");
 
 fprintf("TripLens MATLAB Co-Sim\n");
 fprintf("Mode: %s\n",mode);
@@ -18,11 +19,6 @@ fprintf("Repository: %s\n",repoRoot);
 
 products = ver;
 productNames = string({products.Name});
-fprintf("Installed MathWorks products:\n");
-for k = 1:numel(products)
-    fprintf("  - %s %s\n",products(k).Name,products(k).Version);
-end
-
 report = struct;
 report.Timestamp = char(datetime('now','Format','yyyy-MM-dd''T''HH:mm:ssXXX'));
 report.Mode = char(mode);
@@ -41,37 +37,43 @@ switch mode
 
     case "bfp-cosim"
         report = check_bfp_wrapper_inputs(report);
-        if report.Status ~= "PASS"
-            error("TripLens:WrapperCheckFailed","BFP wrapper prerequisites failed before co-simulation.");
-        end
-        error("TripLens:CosimNotEnabled", ...
-            ["BFP co-simulation has not been enabled yet. " + ...
-             "The next commit will add the external-input Modelica wrapper and FMU/OpenModelica execution after local prerequisite validation."]);
+        tripTime = envNumber("TRIPLENS_BFP_TRIP_TIME",300);
+        rampDuration = envNumber("TRIPLENS_BFP_RAMP_DURATION",2);
+        stopTime = envNumber("TRIPLENS_STOP_TIME",1000);
+        intervals = envNumber("TRIPLENS_INTERVALS",1000);
+        physics = run_bfp_physical_cosim("TripTime",tripTime,"RampDuration",rampDuration, ...
+            "StopTime",stopTime,"Intervals",intervals);
+        report.Status = "PASS";
+        report.Message = "MATLAB launched ThermoSysPro physical BFP trip and verified pump/feedwater response.";
+        report.Physics = physics;
 
     otherwise
         error("TripLens:UnknownMode","Unknown mode: %s",mode);
 end
 
-json = jsonencode(report,PrettyPrint=true);
-fid = fopen(fullfile(outDir,"environment_report.json"),"w");
-assert(fid>=0,"TripLens:OutputOpenFailed","Cannot open environment report for writing.");
-cleaner = onCleanup(@() fclose(fid));
-fwrite(fid,json,"char");
-fprintf("%s\n",json);
+writeReport(outDir,report);
 fprintf("PASS: %s\n",mode);
 end
 
 function report = check_bfp_wrapper_inputs(report)
 root = string(getenv("TRIPLENS_THERMOSYSPRO_ROOT"));
+repoRoot = fileparts(fileparts(mfilename("fullpath")));
+if strlength(root)==0
+    vendorCandidates = [fullfile(repoRoot,"vendor","ThermoSysPro"); fullfile(repoRoot,"vendor","ThermoSysPro","ThermoSysPro")];
+    for k=1:numel(vendorCandidates)
+        if isfile(fullfile(vendorCandidates(k),"package.mo")) || isfile(fullfile(vendorCandidates(k),"ThermoSysPro","package.mo"))
+            root = vendorCandidates(k); break;
+        end
+    end
+end
 if strlength(root)==0
     report.Status = "FAIL";
-    report.Message = "TRIPLENS_THERMOSYSPRO_ROOT is not set on the runner PC.";
+    report.Message = "TRIPLENS_THERMOSYSPRO_ROOT is not set and no vendored ThermoSysPro library was found.";
     write_and_fail(report);
 end
 
 packageFile = fullfile(root,"ThermoSysPro","package.mo");
 if ~isfile(packageFile)
-    % Also accept the library root itself, where package.mo is directly below root.
     altPackage = fullfile(root,"package.mo");
     if isfile(altPackage)
         libraryRoot = root;
@@ -97,33 +99,42 @@ else
 end
 
 text = fileread(modelFile);
-required = [
-    "PompeAlimHP"
-    "rpm_or_mpower"
-    "arretPomesHP"
-    "SourceFumees"
-    "IMassFlow"
-];
+required = ["PompeAlimHP";"rpm_or_mpower";"arretPomesHP";"SourceFumees";"IMassFlow";"CapteurDebitEauHP";"BallonHP"];
 missing = strings(0,1);
 for k=1:numel(required)
-    if ~contains(text,required(k))
-        missing(end+1,1) = required(k); %#ok<AGROW>
-    end
+    if ~contains(text,required(k)), missing(end+1,1) = required(k); end %#ok<AGROW>
 end
-
 report.ThermoSysProRoot = char(libraryRoot);
 report.ModelFile = char(modelFile);
 report.RequiredTokens = cellstr(required);
 report.MissingTokens = cellstr(missing);
-
 if isempty(missing)
     report.Status = "PASS";
-    report.Message = "ThermoSysPro BFP/GT external-control prerequisites were found in CombinedCycle_TripTAC.mo.";
+    report.Message = "ThermoSysPro physical BFP control and measurement points were found.";
 else
     report.Status = "FAIL";
-    report.Message = "Expected controllable components/connectors are missing from the local model.";
+    report.Message = "Expected BFP physical control/measurement points are missing from the local model.";
     write_and_fail(report);
 end
+end
+
+function value = envNumber(name,defaultValue)
+raw = string(getenv(name));
+if strlength(raw)==0
+    value = defaultValue;
+else
+    value = str2double(raw);
+    assert(isfinite(value),"TripLens:BadEnvironmentValue","%s is not numeric: %s",name,raw);
+end
+end
+
+function writeReport(outDir,report)
+json = jsonencode(report,PrettyPrint=true);
+fid = fopen(fullfile(outDir,"environment_report.json"),"w");
+assert(fid>=0,"TripLens:OutputOpenFailed","Cannot open environment report for writing.");
+c = onCleanup(@() fclose(fid));
+fwrite(fid,json,"char");
+fprintf("%s\n",json);
 end
 
 function write_and_fail(report)
@@ -132,9 +143,6 @@ outDir = fullfile(repoRoot,"outputs");
 if ~isfolder(outDir), mkdir(outDir); end
 json = jsonencode(report,PrettyPrint=true);
 fid = fopen(fullfile(outDir,"environment_report.json"),"w");
-if fid>=0
-    fwrite(fid,json,"char");
-    fclose(fid);
-end
+if fid>=0, fwrite(fid,json,"char"); fclose(fid); end
 error("TripLens:PrerequisiteFailed","%s",report.Message);
 end
