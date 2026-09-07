@@ -11,14 +11,14 @@ parse(p,varargin{:});
 opt = p.Results;
 assert(opt.TripTime < opt.StopTime,"TripLens:BadTripTime","TripTime must be before StopTime.");
 
-repoRoot = fileparts(fileparts(mfilename("fullpath")));
+repoRoot = resolveRepoRoot();
 outDir = fullfile(repoRoot,"outputs");
 buildDir = fullfile(repoRoot,"build","bfp_physical");
 if ~isfolder(outDir), mkdir(outDir); end
 if isfolder(buildDir), rmdir(buildDir,"s"); end
 mkdir(buildDir);
 
-libraryRoot = resolveThermoSysProRoot();
+libraryRoot = resolveThermoSysProRoot(repoRoot);
 packageFile = fullfile(libraryRoot,"package.mo");
 wrapperFile = fullfile(repoRoot,"modelica","TripLens_BFP_PhysicalTrip.mo");
 assert(isfile(wrapperFile),"TripLens:MissingWrapper","Missing Modelica wrapper: %s",wrapperFile);
@@ -102,8 +102,7 @@ assert(report.RpmTripVerified,"TripLens:RpmTripNotVerified","ThermoSysPro HP BFP
 assert(report.FeedwaterResponded,"TripLens:NoPhysicalResponse","BFP RPM changed, but feedwater flow did not respond.");
 end
 
-function root = resolveThermoSysProRoot()
-repoRoot = fileparts(fileparts(mfilename("fullpath")));
+function root = resolveThermoSysProRoot(repoRoot)
 vendorLibrary = fullfile(repoRoot,'vendor','ThermoSysPro','ThermoSysPro');
 vendorPackage = fullfile(vendorLibrary,'package.mo');
 fprintf("Checking vendored ThermoSysPro: %s\n",vendorPackage);
@@ -130,6 +129,15 @@ end
 
 error("TripLens:ThermoSysProNotFound", ...
     "ThermoSysPro package.mo not found. Expected vendored file: %s",vendorPackage);
+end
+
+function root = resolveRepoRoot()
+raw = getenv('TRIPLENS_COSIM_REPO_ROOT');
+if ~isempty(raw) && isfolder(raw)
+    root = raw;
+else
+    root = fileparts(fileparts(mfilename("fullpath")));
+end
 end
 
 function exe = resolveOmc()
