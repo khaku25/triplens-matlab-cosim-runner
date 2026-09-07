@@ -46,16 +46,16 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Show runner identity
-        shell: powershell
+        shell: cmd
         run: |
-          Write-Host "Runner: $env:RUNNER_NAME"
-          Write-Host "Machine: $env:COMPUTERNAME"
-          Write-Host "Workspace: $env:GITHUB_WORKSPACE"
-          $omc = Get-Command omc.exe -ErrorAction SilentlyContinue
-          if ($omc) { Write-Host "OpenModelica: $($omc.Source)" } else { Write-Host "OpenModelica: not on PATH (MATLAB will also search standard install folders)" }
+          echo Runner: %RUNNER_NAME%
+          echo Machine: %COMPUTERNAME%
+          echo Workspace: %GITHUB_WORKSPACE%
+          where omc.exe || echo OpenModelica: not on PATH (MATLAB will also search standard install folders)
+          if exist "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" (echo Windows PowerShell: found) else (echo Windows PowerShell: MISSING & exit /b 1)
 
       - name: Run on installed MATLAB
-        shell: powershell
+        shell: cmd
         env:
           TRIPLENS_COSIM_MODE: ${{ inputs.mode }}
           TRIPLENS_BFP_TRIP_TIME: ${{ inputs.bfp_trip_time_s }}
@@ -63,7 +63,7 @@ jobs:
           TRIPLENS_STOP_TIME: ${{ inputs.stop_time_s }}
           TRIPLENS_INTERVALS: ${{ inputs.intervals }}
         run: |
-          .\scripts\run_installed_matlab.ps1 -Mode "$env:TRIPLENS_COSIM_MODE"
+          "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File ".\scripts\run_installed_matlab.ps1" -Mode "%TRIPLENS_COSIM_MODE%"
 
       - name: Upload co-sim outputs
         if: always()
