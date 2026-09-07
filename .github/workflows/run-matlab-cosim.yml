@@ -51,8 +51,10 @@ jobs:
           echo Runner: %RUNNER_NAME%
           echo Machine: %COMPUTERNAME%
           echo Workspace: %GITHUB_WORKSPACE%
-          where omc.exe || echo OpenModelica: not on PATH (MATLAB will also search standard install folders)
+          where omc.exe >nul 2>nul
+          if errorlevel 1 (echo OpenModelica: not on PATH; MATLAB will search standard install folders) else (where omc.exe)
           if exist "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" (echo Windows PowerShell: found) else (echo Windows PowerShell: MISSING & exit /b 1)
+          exit /b 0
 
       - name: Run on installed MATLAB
         shell: cmd
