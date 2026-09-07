@@ -103,20 +103,33 @@ assert(report.FeedwaterResponded,"TripLens:NoPhysicalResponse","BFP RPM changed,
 end
 
 function root = resolveThermoSysProRoot()
-raw = string(getenv("TRIPLENS_THERMOSYSPRO_ROOT"));
 repoRoot = fileparts(fileparts(mfilename("fullpath")));
-candidates = strings(0,1);
-if strlength(raw)>0, candidates(end+1)=raw; end
-candidates(end+1)=fullfile(repoRoot,"vendor","ThermoSysPro","ThermoSysPro");
-candidates(end+1)=fullfile(repoRoot,"vendor","ThermoSysPro");
-for c = candidates'
-    if isfile(fullfile(c,"package.mo"))
-        root = char(c); return;
-    elseif isfile(fullfile(c,"ThermoSysPro","package.mo"))
-        root = char(fullfile(c,"ThermoSysPro")); return;
+vendorLibrary = fullfile(repoRoot,'vendor','ThermoSysPro','ThermoSysPro');
+vendorPackage = fullfile(vendorLibrary,'package.mo');
+fprintf("Checking vendored ThermoSysPro: %s\n",vendorPackage);
+if isfile(vendorPackage)
+    root = vendorLibrary;
+    fprintf("Using vendored ThermoSysPro: %s\n",root);
+    return;
+end
+
+raw = getenv('TRIPLENS_THERMOSYSPRO_ROOT');
+if ~isempty(raw)
+    directPackage = fullfile(raw,'package.mo');
+    nestedLibrary = fullfile(raw,'ThermoSysPro');
+    nestedPackage = fullfile(nestedLibrary,'package.mo');
+    fprintf("Checking TRIPLENS_THERMOSYSPRO_ROOT: %s\n",raw);
+    if isfile(directPackage)
+        root = raw;
+        return;
+    elseif isfile(nestedPackage)
+        root = nestedLibrary;
+        return;
     end
 end
-error("TripLens:ThermoSysProNotFound","Set TRIPLENS_THERMOSYSPRO_ROOT to the folder containing ThermoSysPro/package.mo, or vendor the library under vendor/ThermoSysPro.");
+
+error("TripLens:ThermoSysProNotFound", ...
+    "ThermoSysPro package.mo not found. Expected vendored file: %s",vendorPackage);
 end
 
 function exe = resolveOmc()
