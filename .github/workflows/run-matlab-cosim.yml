@@ -1,0 +1,54 @@
+name: Run TripLens MATLAB Co-Sim
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Select validation or co-simulation stage
+        required: true
+        type: choice
+        default: smoke
+        options:
+          - smoke
+          - bfp-wrapper-check
+          - bfp-cosim
+
+permissions:
+  contents: read
+
+concurrency:
+  group: triplens-matlab-cosim-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  matlab-cosim:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out co-sim repository
+        uses: actions/checkout@v4
+
+      - name: Show runner identity
+        shell: powershell
+        run: |
+          Write-Host "Runner: $env:RUNNER_NAME"
+          Write-Host "Machine: $env:COMPUTERNAME"
+          Write-Host "Workspace: $env:GITHUB_WORKSPACE"
+
+      - name: Run on installed MATLAB
+        shell: powershell
+        env:
+          TRIPLENS_COSIM_MODE: ${{ inputs.mode }}
+        run: |
+          .\scripts\run_installed_matlab.ps1 -Mode "$env:TRIPLENS_COSIM_MODE"
+
+      - name: Upload co-sim outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: triplens-matlab-cosim-${{ github.run_number }}
+          path: |
+            outputs/
+          if-no-files-found: warn
+          retention-days: 30
