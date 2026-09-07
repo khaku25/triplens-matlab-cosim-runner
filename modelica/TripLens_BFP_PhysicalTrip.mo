@@ -11,8 +11,8 @@ model TripLens_BFP_PhysicalTrip
       Starttime=bfpTripTime,
       Duration=bfpRampDuration,
       Finalvalue=bfpTrippedRpm),
-    Debit(Starttime=1e9),
-    Temperature(Starttime=1e9));
+    Debit(Table=[0,606.94; 1000,606.94]),
+    Temperature(Table=[0,893.75; 1000,893.75]));
 
   output Real hpBfpRpm = PompeAlimHP.Vr;
   output Real hpBfpMassFlow(unit="kg/s") = PompeAlimHP.Q;
@@ -20,7 +20,7 @@ model TripLens_BFP_PhysicalTrip
   output Real hpDrumLevel(unit="m") = BallonHP.zl;
   output Real hpDrumPressure(unit="Pa") = BallonHP.P;
   output Real hpSteamFlow(unit="kg/s") = CapteurDebitVapHP.Measure.signal;
-  output Real stMechanicalPower(unit="W") = Alternateur.Wmec;
+  output Real stElectricalPower(unit="W") = Alternateur.Welec;
 
   annotation(experiment(StartTime=0, StopTime=1000, Tolerance=1e-3, Interval=1));
 end TripLens_BFP_PhysicalTrip;
