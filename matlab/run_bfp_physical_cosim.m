@@ -125,7 +125,7 @@ if status==0
     lines = splitlines(strtrim(string(pathText)));
     if ~isempty(lines) && strlength(lines(1))>0, exe = char(lines(1)); return; end
 end
-roots = ["C:\\OpenModelica*\\bin\\omc.exe"; "C:\\Program Files\\OpenModelica*\\bin\\omc.exe"];
+roots = ["C:\OpenModelica*\bin\omc.exe"; "C:\Program Files\OpenModelica*\bin\omc.exe"];
 for pat = roots'
     d = dir(pat);
     if ~isempty(d), exe = fullfile(d(1).folder,d(1).name); return; end
@@ -134,8 +134,7 @@ error("TripLens:OmcNotFound","OpenModelica omc.exe was not found on this PC. Ins
 end
 
 function s = slash(path)
-s = replace(string(path),"\\","/");
-s = replace(s,"\"","\\\"");
+s = replace(string(path),"\","/");
 end
 
 function writeText(file,text)
