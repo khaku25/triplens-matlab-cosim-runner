@@ -43,9 +43,10 @@ jobs:
               r'ThermoSysPro\.InstrumentationAndControl\.Blocks\.Sources\.Rampe\s+arretPomesHP\(\s*'
               r'Initialvalue=1400,\s*Starttime=4000,\s*Duration=1000,\s*Finalvalue=700\)'
           )
+          schedule = [[0,1400],[5,1400],[10,1540],[15,1540],[15.5,1200],[16,800],[17,200],[20,0],[30,0]]
           replacement = (
               'ThermoSysPro.InstrumentationAndControl.Blocks.Tables.Table1DTemps arretPomesHP(\n'
-              '    Table=[0,1400; 5,1400; 10,1540; 14.999,1540; 15,0; 30,0],\n'
+              '    Table=[0,1400; 5,1400; 10,1540; 15,1540; 15.5,1200; 16,800; 17,200; 20,0; 30,0],\n'
               '    option_interpolation=1)'
           )
           txt, n = pattern.subn(replacement, txt, count=1)
@@ -60,8 +61,8 @@ jobs:
               'changed_component': 'PompeAlimHP drive source only',
               'drive_source': 'ThermoSysPro Table1DTemps using native OutputReal connector',
               'connection_preserved': 'PompeAlimHP.rpm_or_mpower <- arretPomesHP.y',
-              'schedule_rpm': [[0,1400],[5,1400],[10,1540],[14.999,1540],[15,0],[30,0]],
-              'intent': 'normal -> +10% HP feedwater pump speed -> hold -> drive loss/trip',
+              'schedule_rpm': schedule,
+              'intent': 'normal -> +10% HP feedwater pump speed -> hold -> realistic coast-down drive loss/trip',
               'original_library_source_modified': False
           }, indent=2), encoding='utf-8')
           print('FWP_MODEL_PATCH_PASS')
@@ -82,7 +83,7 @@ jobs:
             openmodelica/openmodelica:v1.27.0-minimal \
             omc /workspace/build/install_dependencies.mos | tee fwp_test/results/install.log
 
-      - name: Run actual 30 s HP FWP ramp then trip physics simulation
+      - name: Run actual 30 s HP FWP ramp then coast-down trip physics simulation
         shell: bash
         run: |
           set -euo pipefail
@@ -107,6 +108,7 @@ jobs:
             openmodelica/openmodelica:v1.27.0-minimal \
             omc /workspace/build/run_fwp_test.mos | tee fwp_test/results/simulation.log
           test -s fwp_test/results/TripLens_FWP_RampTrip_res.csv
+          sudo chmod -R a+rX fwp_test/results fwp_test/build/TripLens_FWP_RampTrip.mo || true
 
       - name: Analyze physical response and gate the experiment
         shell: bash
@@ -122,39 +124,45 @@ jobs:
           times = [float(row[0]) for row in rows]
           if abs(times[0]) > 1e-9 or times[-1] < 29.99:
               raise SystemExit(f'Incomplete simulation time range: {times[0]}..{times[-1]}')
-          interesting = []
+          interesting=[]
           for i,name in enumerate(header):
               if ('PompeAlimHP' in name or 'BallonHP' in name or 'CapteurDebitEauHP' in name or 'Alternateur' in name or 'arretPomesHP' in name):
                   interesting.append((i,name))
-          interesting = sorted(interesting)[:180]
+          interesting=sorted(interesting)[:180]
           def nearest(t): return min(range(len(times)), key=lambda k: abs(times[k]-t))
-          sample_times = [0,5,10,14.9,15.1,20,30]
-          snapshots = {}; finite = True
+          sample_times=[0,5,10,15,15.5,16,17,20,25,30]
+          snapshots={}; finite=True
           for t in sample_times:
               j=nearest(t); snap={'actual_time_s':times[j]}
               for i,name in interesting:
                   try:
-                      v=float(rows[j][i]); finite = finite and math.isfinite(v); snap[name]=v
+                      v=float(rows[j][i]); finite=finite and math.isfinite(v); snap[name]=v
                   except Exception: pass
-              snapshots[str(t)] = snap
-          cmd_col = next((i for i,n in enumerate(header) if n in ('arretPomesHP.y.signal','PompeAlimHP.rpm')), None)
-          cmd_check = None
+              snapshots[str(t)]=snap
+          cmd_col=next((i for i,n in enumerate(header) if n in ('arretPomesHP.y.signal','PompeAlimHP.rpm')),None)
+          drive_check=None
           if cmd_col is not None:
-              vals={str(t):float(rows[nearest(t)][cmd_col]) for t in [5,10,14.9,15.1,20,30]}
-              cmd_check=vals
-              if not (vals['10'] > vals['5']*1.05): raise SystemExit(f'Pump command/speed did not rise materially: {vals}')
-              if not (abs(vals['20']) < max(5.0,abs(vals['10'])*0.05)): raise SystemExit(f'Pump command/speed did not collapse after trip: {vals}')
+              check_times=[5,10,15,15.5,16,17,20,30]
+              vals={str(t):float(rows[nearest(t)][cmd_col]) for t in check_times}
+              drive_check=vals
+              if not (vals['10'] > vals['5']*1.05):
+                  raise SystemExit(f'Pump command/speed did not rise materially: {vals}')
+              coast=[vals['15'],vals['15.5'],vals['16'],vals['17'],vals['20']]
+              if not all(coast[i+1] <= coast[i] + 1e-9 for i in range(len(coast)-1)):
+                  raise SystemExit(f'Pump coast-down is not monotonic: {vals}')
+              if not (abs(vals['20']) < 5.0 and abs(vals['30']) < 5.0):
+                  raise SystemExit(f'Pump command/speed did not reach and hold zero: {vals}')
           if not finite: raise SystemExit('Non-finite value found in sampled physical outputs')
           report={
               'status':'pass','simulation_start_s':times[0],'simulation_end_s':times[-1],
               'samples':len(rows),'interesting_variable_count':len(interesting),
-              'interesting_variables':[n for _,n in interesting],'drive_check':cmd_check,
+              'interesting_variables':[n for _,n in interesting],'drive_check':drive_check,
               'snapshots':snapshots,
-              'interpretation_guardrail':'Native process-side FWP drive-loss experiment; not yet ECMS breaker/relay initiated electrical trip.'
+              'interpretation_guardrail':'Native process-side FWP coast-down drive-loss experiment; not yet ECMS breaker/relay initiated electrical trip.'
           }
           Path('fwp_test/results/fwp_ramp_trip_report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
-          print('FWP_RAMP_TRIP_NATIVE_PHYSICS_PASS')
-          print(json.dumps({'drive_check':cmd_check,'interesting_variables':report['interesting_variables'][:30]},indent=2))
+          print('FWP_COASTDOWN_TRIP_NATIVE_PHYSICS_PASS')
+          print(json.dumps({'drive_check':drive_check,'interesting_variables':report['interesting_variables'][:30]},indent=2))
           PY
 
       - name: Upload FWP experiment evidence
