@@ -23,6 +23,11 @@ assert(~isempty(mdrive) && isfolder(mdrive),'TripLens:MATLABDriveUnavailable', .
 
 modelName='TripLens_ECMS_DigitalTwin';
 modelPath=fullfile(mdrive,'TripLens_ECMS_DigitalTwin',[modelName '.slx']);
+modelsDir=fullfile(mdrive,'TripLens_ECMS_DigitalTwin','models');
+assert(isfolder(modelsDir),'TripLens:MissingModelsDirectory', ...
+    'ECMS referenced-model folder does not exist: %s',modelsDir);
+addpath(modelsDir,'-begin');
+cleanupPath=onCleanup(@() rmpath(modelsDir)); %#ok<NASGU>
 target=[modelName '/Protection_Control'];
 if bdIsLoaded(modelName), close_system(modelName,0); end
 load_system(modelPath);
@@ -41,7 +46,9 @@ for k=1:n
     direction=upper(char(T.direction(k)));
     blockPath(k)=string([target '/' signal]);
     blockExists(k)=getSimulinkBlockHandle(char(blockPath(k)))~=-1;
-    bound=strtrim(string(T.bound_tag(k)));
+    bound=string(T.bound_tag(k));
+    if ismissing(bound), bound=""; end
+    bound=strtrim(bound);
     externalTagDeclared(k)=strlength(bound)>0;
     if externalTagDeclared(k), tagDisplay(k)=bound; else, tagDisplay(k)="실제 외부 태그 연결 대기"; end
     if blockExists(k)
@@ -188,15 +195,18 @@ fprintf(fid,'</tbody></table></main></body></html>');
 end
 
 function value=displayBinding(bound)
-if strlength(strtrim(string(bound)))==0
+bound=string(bound);
+if ismissing(bound) || strlength(strtrim(bound))==0
     value="실제 외부 태그 연결 대기";
 else
-    value=string(bound);
+    value=bound;
 end
 end
 
 function out=htmlEscape(value)
-out=char(string(value));
+value=string(value);
+if ismissing(value), value=""; end
+out=char(value);
 out=strrep(out,'&','&amp;'); out=strrep(out,'<','&lt;');
 out=strrep(out,'>','&gt;'); out=strrep(out,'"','&quot;');
 end
