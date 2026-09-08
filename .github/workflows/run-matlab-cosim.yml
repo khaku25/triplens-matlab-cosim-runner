@@ -4,6 +4,11 @@ on:
   push:
     branches:
       - main
+    paths:
+      - 'legacy_exact/**'
+      - 'matlab/**'
+      - 'modelica/**'
+      - 'scripts/**'
   workflow_dispatch:
     inputs:
       mode:
@@ -45,11 +50,9 @@ jobs:
     if: ${{ github.event_name == 'push' || inputs.mode == 'legacy-exact' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
-
     steps:
       - name: Check out co-sim repository
         uses: actions/checkout@v4
-
       - name: Prepare exact legacy ThermoSysPro source
         shell: bash
         run: |
@@ -60,39 +63,21 @@ jobs:
           git -C legacy_exact/vendor/ThermoSysPro checkout --detach db81ae1b5a6a85f6c6c7693244cafa6087e18ff5
           test "$(git -C legacy_exact/vendor/ThermoSysPro rev-parse HEAD)" = "db81ae1b5a6a85f6c6c7693244cafa6087e18ff5"
           test -f legacy_exact/vendor/ThermoSysPro/ThermoSysPro/package.mo
-
       - name: Render exact legacy GT baseline
         shell: bash
         run: |
           set -euo pipefail
-          python3 legacy_exact/scripts/render_modelica.py \
-            --trip-time 600 \
-            --trip-ramp-duration 5 \
-            --stop-time 1000 \
-            --intervals 10000
-
+          python3 legacy_exact/scripts/render_modelica.py --trip-time 600 --trip-ramp-duration 5 --stop-time 1000 --intervals 10000
       - name: Install exact legacy Modelica dependency
         shell: bash
         run: |
           set -euo pipefail
-          docker run --rm \
-            -v "$PWD/legacy_exact/build/omhome:/root" \
-            -v "$PWD/legacy_exact:/workspace" \
-            -w /workspace \
-            openmodelica/openmodelica:v1.27.0-minimal \
-            omc /workspace/modelica/install_dependencies.mos
-
+          docker run --rm -v "$PWD/legacy_exact/build/omhome:/root" -v "$PWD/legacy_exact:/workspace" -w /workspace openmodelica/openmodelica:v1.27.0-minimal omc /workspace/modelica/install_dependencies.mos
       - name: Run exact legacy GT baseline physics
         shell: bash
         run: |
           set -euo pipefail
-          docker run --rm \
-            -v "$PWD/legacy_exact/build/omhome:/root" \
-            -v "$PWD/legacy_exact:/workspace" \
-            -w /workspace \
-            openmodelica/openmodelica:v1.27.0-minimal \
-            omc /workspace/build/run.mos
-
+          docker run --rm -v "$PWD/legacy_exact/build/omhome:/root" -v "$PWD/legacy_exact:/workspace" -w /workspace openmodelica/openmodelica:v1.27.0-minimal omc /workspace/build/run.mos
       - name: Verify exact legacy GT baseline
         shell: bash
         run: |
@@ -103,16 +88,13 @@ jobs:
           import csv
           from pathlib import Path
           p = Path('legacy_exact/outputs/thermosyspro-raw.csv')
-          with p.open(newline='', encoding='utf-8') as f:
-              rows = list(csv.reader(f))
-          assert len(rows) == 10002, f'expected 10001 data rows, got {len(rows)-1}'
-          header = rows[0]
-          ti = header.index('time')
-          assert abs(float(rows[1][ti]) - 0.0) < 1e-9
+          with p.open(newline='', encoding='utf-8') as f: rows = list(csv.reader(f))
+          assert len(rows) == 10002
+          ti = rows[0].index('time')
+          assert abs(float(rows[1][ti])) < 1e-9
           assert abs(float(rows[-1][ti]) - 1000.0) < 1e-6
           print('EXACT LEGACY GT BASELINE PASS')
           PY
-
       - name: Upload exact legacy GT outputs
         uses: actions/upload-artifact@v4
         with:
@@ -129,11 +111,9 @@ jobs:
     needs: legacy-exact
     runs-on: ubuntu-24.04
     timeout-minutes: 90
-
     steps:
       - name: Check out co-sim repository
         uses: actions/checkout@v4
-
       - name: Prepare exact legacy ThermoSysPro source
         shell: bash
         run: |
@@ -143,7 +123,6 @@ jobs:
           git clone --no-checkout https://github.com/Dwarf-Planet-Project/ThermoSysPro.git legacy_exact/vendor/ThermoSysPro
           git -C legacy_exact/vendor/ThermoSysPro checkout --detach db81ae1b5a6a85f6c6c7693244cafa6087e18ff5
           test "$(git -C legacy_exact/vendor/ThermoSysPro rev-parse HEAD)" = "db81ae1b5a6a85f6c6c7693244cafa6087e18ff5"
-
       - name: Render exact legacy BFP trip model
         shell: bash
         run: |
@@ -151,45 +130,23 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           root = Path('legacy_exact')
-          repl = {
-              '@BFP_TRIP_TIME@': '300',
-              '@BFP_COASTDOWN_DURATION@': '5',
-              '@BFP_FINAL_RPM@': '1000',
-              '@STOP_TIME@': '1000',
-              '@NUMBER_OF_INTERVALS@': '10000',
-              '@OUTPUT_INTERVAL@': '0.1',
-          }
-          for src_name, dst_name in [
-              ('TripLens_CombinedCycle_BFPTrip.mo.tpl','TripLens_CombinedCycle_BFPTrip.mo'),
-              ('run_bfp.mos.tpl','run_bfp.mos')]:
-              text = (root/'modelica'/src_name).read_text(encoding='utf-8')
-              for k,v in repl.items(): text = text.replace(k,v)
-              assert '@' not in text, f'unresolved template token in {src_name}'
-              (root/'build'/dst_name).write_text(text, encoding='utf-8')
+          repl = {'@BFP_TRIP_TIME@':'300','@BFP_COASTDOWN_DURATION@':'5','@BFP_FINAL_RPM@':'1000','@STOP_TIME@':'1000','@NUMBER_OF_INTERVALS@':'10000','@OUTPUT_INTERVAL@':'0.1'}
+          for src_name,dst_name in [('TripLens_CombinedCycle_BFPTrip.mo.tpl','TripLens_CombinedCycle_BFPTrip.mo'),('run_bfp.mos.tpl','run_bfp.mos')]:
+              text=(root/'modelica'/src_name).read_text(encoding='utf-8')
+              for k,v in repl.items(): text=text.replace(k,v)
+              assert '@' not in text
+              (root/'build'/dst_name).write_text(text,encoding='utf-8')
           PY
-
       - name: Install exact legacy Modelica dependency
         shell: bash
         run: |
           set -euo pipefail
-          docker run --rm \
-            -v "$PWD/legacy_exact/build/omhome:/root" \
-            -v "$PWD/legacy_exact:/workspace" \
-            -w /workspace \
-            openmodelica/openmodelica:v1.27.0-minimal \
-            omc /workspace/modelica/install_dependencies.mos
-
+          docker run --rm -v "$PWD/legacy_exact/build/omhome:/root" -v "$PWD/legacy_exact:/workspace" -w /workspace openmodelica/openmodelica:v1.27.0-minimal omc /workspace/modelica/install_dependencies.mos
       - name: Run exact legacy BFP physics to 1000s
         shell: bash
         run: |
           set -euo pipefail
-          docker run --rm \
-            -v "$PWD/legacy_exact/build/omhome:/root" \
-            -v "$PWD/legacy_exact:/workspace" \
-            -w /workspace \
-            openmodelica/openmodelica:v1.27.0-minimal \
-            omc /workspace/build/run_bfp.mos
-
+          docker run --rm -v "$PWD/legacy_exact/build/omhome:/root" -v "$PWD/legacy_exact:/workspace" -w /workspace openmodelica/openmodelica:v1.27.0-minimal omc /workspace/build/run_bfp.mos
       - name: Verify BFP physical response
         shell: bash
         run: |
@@ -199,37 +156,23 @@ jobs:
           python3 - <<'PY'
           import csv, statistics
           from pathlib import Path
-          p = Path('legacy_exact/outputs/bfp-physical-raw.csv')
-          with p.open(newline='', encoding='utf-8') as f:
-              rows = list(csv.DictReader(f))
-          assert len(rows) == 10001, f'expected 10001 data rows, got {len(rows)}'
-          assert abs(float(rows[0]['time'])) < 1e-9
-          assert abs(float(rows[-1]['time']) - 1000.0) < 1e-6
-
+          p=Path('legacy_exact/outputs/bfp-physical-raw.csv')
+          with p.open(newline='',encoding='utf-8') as f: rows=list(csv.DictReader(f))
+          assert len(rows)==10001
+          assert abs(float(rows[0]['time']))<1e-9 and abs(float(rows[-1]['time'])-1000.0)<1e-6
           def col(name): return [float(r[name]) for r in rows]
-          speed_name = 'arretPomesHP.y.signal'
-          assert speed_name in rows[0], f'{speed_name} missing'
-          speed = col(speed_name)
-          t = col('time')
-          pre = [v for tt,v in zip(t,speed) if 280 <= tt < 300]
-          post = [v for tt,v in zip(t,speed) if 310 <= tt <= 330]
-          pre_speed = statistics.median(pre)
-          post_speed = statistics.median(post)
-          assert pre_speed > 1390, pre_speed
-          assert 990 <= post_speed <= 1010, post_speed
-
-          flow_candidates = [k for k in rows[0] if 'CapteurDebitEauHP' in k and ('Measure.signal' in k or k.endswith('.Q'))]
-          assert flow_candidates, 'HP feedwater flow signal missing'
-          flow_name = flow_candidates[0]
-          flow = col(flow_name)
-          pre_f = statistics.median(v for tt,v in zip(t,flow) if 280 <= tt < 300)
-          post_f = statistics.median(v for tt,v in zip(t,flow) if 310 <= tt <= 330)
-          assert abs(post_f-pre_f) > 1e-6, (pre_f, post_f)
-
-          print(f'BFP EXACT 1000s PASS: speed {pre_speed:.3f} -> {post_speed:.3f} rpm')
-          print(f'HP feedwater {flow_name}: {pre_f:.6g} -> {post_f:.6g}')
+          t=col('time'); speed=col('arretPomesHP.y.signal')
+          pre=statistics.median(v for tt,v in zip(t,speed) if 280<=tt<300)
+          post=statistics.median(v for tt,v in zip(t,speed) if 310<=tt<=330)
+          assert pre>1390 and 990<=post<=1010
+          flow_candidates=[k for k in rows[0] if 'CapteurDebitEauHP' in k and ('Measure.signal' in k or k.endswith('.Q'))]
+          assert flow_candidates
+          flow=col(flow_candidates[0])
+          pre_f=statistics.median(v for tt,v in zip(t,flow) if 280<=tt<300)
+          post_f=statistics.median(v for tt,v in zip(t,flow) if 310<=tt<=330)
+          assert abs(post_f-pre_f)>1e-6
+          print(f'BFP EXACT 1000s PASS: {pre:.3f}->{post:.3f} rpm; feedwater {pre_f:.6g}->{post_f:.6g}')
           PY
-
       - name: Upload exact BFP outputs
         uses: actions/upload-artifact@v4
         with:
@@ -245,11 +188,9 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode != 'legacy-exact' }}
     runs-on: [self-hosted, Windows, X64]
     timeout-minutes: 180
-
     steps:
       - name: Check out co-sim repository
         uses: actions/checkout@v4
-
       - name: Show runner identity
         shell: cmd
         run: |
@@ -258,7 +199,6 @@ jobs:
           echo Workspace: %GITHUB_WORKSPACE%
           if exist "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" (echo Windows PowerShell: found) else (echo Windows PowerShell: MISSING & exit /b 1)
           exit /b 0
-
       - name: Prepare ThermoSysPro source for experimental MATLAB path
         shell: cmd
         run: |
@@ -268,7 +208,6 @@ jobs:
           "C:\Program Files\Git\cmd\git.exe" clone --depth 1 https://gitlab.pam-retd.fr/thermosysproandco/ThermoSysPro.git "vendor\ThermoSysPro"
           if errorlevel 1 exit /b 1
           exit /b 0
-
       - name: Map ASCII workspace for experimental MATLAB path
         shell: cmd
         run: |
@@ -276,7 +215,6 @@ jobs:
           subst T: "%GITHUB_WORKSPACE%"
           if errorlevel 1 exit /b 1
           exit /b 0
-
       - name: Run on installed MATLAB
         shell: cmd
         env:
@@ -289,7 +227,6 @@ jobs:
           TRIPLENS_THERMOSYSPRO_ROOT: T:\vendor\ThermoSysPro
         run: |
           "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File ".\scripts\run_installed_matlab.ps1" -Mode "%TRIPLENS_COSIM_MODE%"
-
       - name: Upload experimental co-sim outputs
         if: always()
         uses: actions/upload-artifact@v4
@@ -300,7 +237,6 @@ jobs:
             build/bfp_physical/*.mos
           if-no-files-found: warn
           retention-days: 30
-
       - name: Remove ASCII workspace mapping
         if: always()
         shell: cmd
