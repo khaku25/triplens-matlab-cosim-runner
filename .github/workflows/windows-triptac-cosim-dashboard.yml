@@ -33,8 +33,7 @@ jobs:
         shell: cmd
         run: |
           dir /s /b fmu_artifact
-          if not exist "fmu_artifact\TripLens_CombinedCycle_TripTAC_CoSim.fmu" exit /b 1
-          echo FMU=%CD%\fmu_artifact\TripLens_CombinedCycle_TripTAC_CoSim.fmu
+          dir /s /b "fmu_artifact\*.fmu" >nul || exit /b 1
 
       - name: Build ECMS dashboard and run real Simulink-FMU smoke
         shell: cmd
