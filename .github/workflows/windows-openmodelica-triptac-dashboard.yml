@@ -112,11 +112,18 @@ jobs:
       - name: Build FMI 2.0 Co-Simulation FMU with offline Windows OpenModelica
         shell: cmd
         run: |
+          set "USERPROFILE=T:\omprofile"
+          set "HOME=T:\omprofile"
+          set "HOMEDRIVE=T:"
+          set "HOMEPATH=\omprofile"
           set "APPDATA=T:\omprofile\AppData\Roaming"
           set "LOCALAPPDATA=T:\omprofile\AppData\Local"
           set "TEMP=T:\omtmp"
           set "TMP=T:\omtmp"
-          set "OPENMODELICALIBRARY=T:\omlib\libraries;T:\omprofile\AppData\Roaming\.openmodelica\libraries"
+          set "OPENMODELICALIBRARY=T:\omprofile\AppData\Roaming\.openmodelica\libraries;T:\omlib\libraries"
+          echo USERPROFILE=%USERPROFILE%
+          echo APPDATA=%APPDATA%
+          echo OPENMODELICALIBRARY=%OPENMODELICALIBRARY%
           "C:\Program Files\OpenModelica1.28.0-dev-64bit\bin\omc.exe" T:\legacy_exact\modelica\export_windows_triptac_fmu.mos > T:\legacy_exact\build\winfmu\export_windows_fmu.log 2>&1
           type T:\legacy_exact\build\winfmu\export_windows_fmu.log
           findstr /c:"Check of ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_CombinedCycle_TripTAC_CoSim completed successfully" T:\legacy_exact\build\winfmu\export_windows_fmu.log >nul || exit /b 1
