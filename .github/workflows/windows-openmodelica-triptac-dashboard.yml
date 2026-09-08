@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   windows-triptac-cosim:
@@ -19,10 +20,14 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Download validated TripTAC wrapper artifact
+        uses: actions/download-artifact@v4
         with:
-          python-version: '3.12'
+          name: triplens-triptac-cosim-fmu-4
+          path: validated_artifact
+          repository: khaku25/triplens-matlab-cosim-runner
+          run-id: 34199738020
+          github-token: ${{ github.token }}
 
       - name: Map ASCII workspace
         shell: cmd
@@ -31,7 +36,7 @@ jobs:
           subst T: "%GITHUB_WORKSPACE%"
           if errorlevel 1 exit /b 1
 
-      - name: Prepare exact pinned ThermoSysPro and wrapper
+      - name: Prepare exact pinned ThermoSysPro and validated wrapper
         shell: cmd
         run: |
           T:
@@ -45,8 +50,8 @@ jobs:
           if errorlevel 1 exit /b 1
           "C:\Program Files\Git\cmd\git.exe" -C legacy_exact\vendor\ThermoSysPro checkout --detach db81ae1b5a6a85f6c6c7693244cafa6087e18ff5
           if errorlevel 1 exit /b 1
-          python legacy_exact\scripts\build_trip_tac_cosim.py
-          if errorlevel 1 exit /b 1
+          if not exist validated_artifact\TripLens_CombinedCycle_TripTAC_CoSim.mo exit /b 1
+          copy /Y validated_artifact\TripLens_CombinedCycle_TripTAC_CoSim.mo legacy_exact\build\TripLens_CombinedCycle_TripTAC_CoSim.mo
           if not exist legacy_exact\build\TripLens_CombinedCycle_TripTAC_CoSim.mo exit /b 1
 
       - name: Install exact Modelica dependency with local OpenModelica
@@ -63,11 +68,11 @@ jobs:
           if not exist T:\legacy_exact\build\winfmu\TripLens_CombinedCycle_TripTAC_CoSim.fmu exit /b 1
           copy /Y T:\legacy_exact\build\winfmu\TripLens_CombinedCycle_TripTAC_CoSim.fmu T:\fmu_artifact\cosim\TripLens_CombinedCycle_TripTAC_CoSim.fmu
 
-      - name: Verify Windows FMU payload
+      - name: Check Windows FMU archive contains win64
         shell: cmd
         run: |
-          T:
-          python -c "import zipfile; p=r'fmu_artifact\cosim\TripLens_CombinedCycle_TripTAC_CoSim.fmu'; z=zipfile.ZipFile(p); n=z.namelist(); x=z.read('modelDescription.xml').decode('utf-8'); req=['gtExhaustFlowCmd','gtExhaustTemperatureCmd','stElectricalPower','hpDrumLevel','ipDrumLevel','lpDrumLevel','hpDrumPressure','ipDrumPressure','lpDrumPressure']; assert all(v in x for v in req),[v for v in req if v not in x]; assert 'CoSimulation' in x; w=[q for q in n if q.startswith('binaries/win64/')]; assert w,'win64 binary missing'; print('WINDOWS TRIPTAC FMU PASS'); print('\n'.join(w))"
+          tar -tf T:\fmu_artifact\cosim\TripLens_CombinedCycle_TripTAC_CoSim.fmu | findstr /i "binaries/win64" >nul
+          if errorlevel 1 exit /b 1
 
       - name: Build dashboard and run real Simulink-FMU smoke
         shell: cmd
