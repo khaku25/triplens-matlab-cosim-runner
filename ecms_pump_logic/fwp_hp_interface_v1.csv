@@ -1,0 +1,25 @@
+signal_name,direction,data_type,owner,bound_tag,status,role,notes
+fwp_hp_run_request,IN,boolean,DCS_COMMAND,FWP_HP_RUN,TAG_MASTER_SOURCE_LINKED,START when changed 0 to 1 and normal STOP when changed 1 to 0,START never closes the feeder breaker
+fwp_hp_trip_request,IN,boolean,DCS_OR_PROTECTION_COMMAND,FWP_HP_TRIP,TAG_MASTER_SOURCE_LINKED,Trip request,Trip is latched and commands feeder breaker opening
+fwp_hp_reset_request,IN,boolean,DCS_COMMAND,FWP_HP_RESET,TAG_MASTER_SOURCE_LINKED,Trip reset request,Accepted only after cause clear zero speed breaker open and run request off
+feeder_cb_reclose_cmd,IN,boolean,ECMS_COMMAND,VCB_A01_CLOSE_CMD,PENDING_TAG_MASTER,Separate manual feeder breaker close command,No automatic reclose and not derived from START
+remote_mode,IN,boolean,DCS_FEEDBACK,FWP_HP_REMOTE_MODE,PENDING_TAG_MASTER,Remote control selected start permissive,Virtual test input until field tag exists
+feeder_cb_ready,IN,boolean,ECMS_FEEDBACK,VCB-A01.READY,PENDING_TAG_MASTER,Breaker ready start and close permissive,Must come from electrical twin or field feedback
+motor_ready,IN,boolean,ECMS_FEEDBACK,FWP-HP.MOTOR_READY,PENDING_TAG_MASTER,Motor ready start permissive,Must come from electrical twin or field feedback
+process_start_permissive,IN,boolean,DCS_LOGIC,FWP_HP.PROCESS_START_PERMISSIVE,PENDING_CAUSE_EFFECT,Aggregated process start permissive,No missing individual interlocks are silently assumed
+bus_a_voltage_kv,IN,double,ELECTRICAL_TWIN,ECMS.BUS-A.VOLTAGE,CONTRACT_SOURCE_LINKED,Solved BUS-A voltage in kV,Never synthesized by operation logic
+electrical_trip_active,IN,boolean,ELECTRICAL_TWIN,VCB-A01.PROTECTION_TRIP,PENDING_RELAY_PHYSICS,Solved protection trip state,50/51 and other relay physics remain outside this core
+run_enable_cmd,OUT,boolean,DCS_CONTROL,FWP_HP.RUN_ENABLE,MODEL_OUTPUT,Motor starter or drive run enable,Removed on STOP or TRIP
+feeder_cb_trip_cmd,OUT,boolean,ECMS_PROTECTION,VCB_A01_TRIP_CMD,MODEL_OUTPUT,Latched feeder breaker trip command,Persists until a valid reset
+feeder_cb_closed_fb,OUT,boolean,ELECTRICAL_SURROGATE,VCB-A01.CLOSED,VIRTUAL_FEEDBACK,Virtual breaker feedback for test,Replace with solved electrical-twin feedback at co-simulation integration
+trip_latched,OUT,boolean,ECMS_CONTROL,FWP_HP.TRIP_LATCH,MODEL_OUTPUT,Trip latch state,No automatic restart
+ready,OUT,boolean,DCS_STATE,FWP_HP.READY,MODEL_OUTPUT,Stopped at zero speed with feeder breaker closed,
+starting,OUT,boolean,DCS_STATE,FWP_HP.STARTING,MODEL_OUTPUT,Run enabled but speed not yet proven,
+running,OUT,boolean,DCS_STATE,FWP_HP.RUNNING,MODEL_OUTPUT,Absolute speed-proven running state,
+stopping,OUT,boolean,DCS_STATE,FWP_HP.STOPPING,MODEL_OUTPUT,Normal coast-down with feeder breaker closed,
+tripped,OUT,boolean,DCS_STATE,FWP_HP.TRIPPED,MODEL_OUTPUT,Trip latch active,
+run_fb,OUT,boolean,ELECTRICAL_SURROGATE,FWP_HP.RUN_FB,VIRTUAL_FEEDBACK,Virtual starter or drive energized feedback,Separate from speed proven
+speed_rpm,OUT,double,MOTOR_SURROGATE,FWP_HP.SPEED_RPM,VIRTUAL_PHYSICAL_STATE,Motor shaft speed in rpm,No rate-of-change alarm is derived
+speed_proven,OUT,boolean,DCS_STATE,FWP_HP.SPEED_PROVEN,MODEL_OUTPUT,Speed at or above the absolute 1260 rpm proof value,
+state_code,OUT,double,ECMS_CONTROL,FWP_HP.STATE_CODE,MODEL_OUTPUT,1 READY 2 STARTING 3 RUNNING 4 STOPPING 5 TRIPPED 6 RESET_WAIT,
+thermo_speed_input_rpm,OUT,double,THERMO_INTERFACE,PompeAlimHP.rpm_or_mpower,MODEL_PORT_VERIFIED,Speed input to native ThermoSysPro HP feedwater pump,Flow pressure and drum response remain ThermoSysPro outputs

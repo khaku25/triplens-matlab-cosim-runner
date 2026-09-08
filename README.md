@@ -13,15 +13,26 @@ Run the co-simulation on the user's actual Windows MATLAB installation through a
 3. Alarm/event generation
 4. TripLens outputs
 
-The first proof-of-concept is **HP BFP trip**:
+The first proof-of-concept is **HP BFP operation and trip**:
 
-`FWP_HP_TRIP -> pump speed command = 0 -> ThermoSysPro dynamic response -> CSV results`
+`FWP_HP_RUN / FWP_HP_TRIP / FWP_HP_RESET -> ECMS operation state machine -> VCB-A01 and motor-shaft state -> ThermoSysPro dynamic response -> CSV results`
+
+Normal STOP and TRIP are intentionally different:
+
+- Normal STOP removes the run enable, keeps `VCB-A01` closed, and lets RPM coast down.
+- TRIP latches the trip, commands `VCB-A01` open after its operating delay, and lets RPM coast down.
+- RESET does not reclose the breaker and does not restart the pump. Reclose and a new RUN edge are separate actions.
+- START never closes the feeder breaker.
+
+The operation core uses the model-native HP FWP speed of `1400 rpm` and exports `thermo_speed_input_rpm` for the native `PompeAlimHP.rpm_or_mpower` connection. No derivative protection and no process H/HH/L/LL alarm is active before the physical input is connected.
 
 ## Current stages
 
 - `smoke`: verify the real MATLAB environment and local dependencies.
 - `bfp-wrapper-check`: verify that the local ThermoSysPro `CombinedCycle_TripTAC.mo` contains the expected controllable pump and boundary connectors.
-- `bfp-cosim`: reserved for the next step, after the local ThermoSysPro/OpenModelica paths have passed validation.
+- `ecms-fwp-hp-operation`: build and test READY/STARTING/RUNNING/STOPPING/TRIPPED/RESET_WAIT, breaker actuation, RPM dynamics, reset and manual reclose in Simulink.
+- `fwp-ramp-trip-native`: verify that the native ThermoSysPro HP FWP speed input produces process response. This is a process-side experiment, not an ECMS breaker-initiated trip.
+- `bfp-cosim`: final external wiring between the validated ECMS operation output and the ThermoSysPro input/feedback.
 
 ## Local folders expected on the self-hosted PC
 
@@ -31,7 +42,6 @@ Set these environment variables on the runner PC or pass them when testing local
 - `TRIPLENS_OPENMODELICA_HOME`: optional OpenModelica install root; the scripts also search common Windows locations.
 
 No files in the existing cloud-runner repository are required to be modified.
-
 
 ## ECMS/VVP Simulink automation
 
