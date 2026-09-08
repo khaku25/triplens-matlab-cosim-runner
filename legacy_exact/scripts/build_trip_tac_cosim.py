@@ -13,17 +13,20 @@ model CombinedCycle_TripTAC
   "CCPP model to simulate a load variation from 100% to 50%"'''
 new_header = '''within ThermoSysPro.Examples.CombinedCyclePowerPlant;
 block TripLensExternalRealSource
-  Modelica.Blocks.Interfaces.RealInput u;
+  parameter Real initialValue;
+  Modelica.Blocks.Interfaces.RealInput u(start=initialValue);
   ThermoSysPro.InstrumentationAndControl.Connectors.OutputReal y;
 equation
-  y.signal = u;
+  // Keep ThermoSysPro inside its validated water/steam region while the
+  // co-simulation master is still entering FMI initialization mode.
+  y.signal = if initial() then initialValue else u;
 end TripLensExternalRealSource;
 
 model TripLens_CombinedCycle_TripTAC_CoSim
   "CombinedCycle_TripTAC with external GT boundary inputs for FMI co-simulation"
-  Modelica.Blocks.Interfaces.RealInput gtExhaustFlowCmd(unit="kg/s")
+  Modelica.Blocks.Interfaces.RealInput gtExhaustFlowCmd(start=606.94, unit="kg/s")
     "External GT exhaust mass-flow command";
-  Modelica.Blocks.Interfaces.RealInput gtExhaustTemperatureCmd(unit="K")
+  Modelica.Blocks.Interfaces.RealInput gtExhaustTemperatureCmd(start=893.75, unit="K")
     "External GT exhaust temperature command";
   Modelica.Blocks.Interfaces.RealOutput stElectricalPower(unit="W");
   Modelica.Blocks.Interfaces.RealOutput hpDrumLevel(unit="m");
@@ -48,11 +51,11 @@ pat_temp = re.compile(
     re.S)
 
 text, n1 = pat_debit.subn(
-    'TripLensExternalRealSource Debit annotation '
+    'TripLensExternalRealSource Debit(initialValue=606.94) annotation '
     '(Placement(transformation(extent={{-527,-19},{-457,55}}, rotation=0)));',
     text, count=1)
 text, n2 = pat_temp.subn(
-    'TripLensExternalRealSource Temperature annotation '
+    'TripLensExternalRealSource Temperature(initialValue=893.75) annotation '
     '(Placement(transformation(extent={{-527,-157},{-457,-83}}, rotation=0)));',
     text, count=1)
 if n1 != 1 or n2 != 1:
