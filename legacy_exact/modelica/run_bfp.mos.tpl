@@ -1,0 +1,20 @@
+setCommandLineOptions("--std=3.4");
+loadModel(Modelica, {"3.2.3"});
+getErrorString();
+loadFile("/workspace/vendor/ThermoSysPro/ThermoSysPro/package.mo");
+getErrorString();
+loadFile("/workspace/build/TripLens_CombinedCycle_BFPTrip.mo");
+getErrorString();
+cd("/workspace/build");
+simulate(
+  TripLens_CombinedCycle_BFPTrip,
+  startTime=0,
+  stopTime=@STOP_TIME@,
+  numberOfIntervals=@NUMBER_OF_INTERVALS@,
+  tolerance=1e-3,
+  method="dassl",
+  outputFormat="csv",
+  simflags="-noEventEmit",
+  fileNamePrefix="thermosyspro_bfp_blind",
+  variableFilter="^(time|PompeAlimHP\\.(Vr|Q|Qv|Wm|R|deltaP)|arretPomesHP\\.y\\.signal|CapteurDebitEau(HP|MP|BP)\\.(Q|Measure\\.signal)|Alternateur\\.Welec|Ballon(HP|MP|BP)\\.(yLevel\\.signal|zl|P)|Turbine(HP|MP|BP)\\.Q|vanne_alimentation(HP|MP|BP)\\.Ouv\\.signal|Debit\\.y\\.signal|Temperature\\.y\\.signal)$");
+getErrorString();
