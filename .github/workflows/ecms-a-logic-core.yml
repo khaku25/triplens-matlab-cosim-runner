@@ -6,6 +6,11 @@ on:
     paths:
       - 'ecms_logic/**'
       - '.github/workflows/ecms-a-logic-core.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'ecms_logic/**'
+      - '.github/workflows/ecms-a-logic-core.yml'
   workflow_dispatch:
 
 permissions:
@@ -22,7 +27,7 @@ jobs:
       - name: Generate validate and install A-program ECMS Simulink core
         shell: cmd
         run: |
-          "C:\Program Files\MATLAB\R2025b\bin\matlab.exe" -batch "addpath(fullfile(getenv('GITHUB_WORKSPACE'),'ecms_logic')); build_a_logic_core; install_a_logic_into_ecms"
+          "C:\Program Files\MATLAB\R2025b\bin\matlab.exe" -batch "addpath(fullfile(getenv('GITHUB_WORKSPACE'),'ecms_logic')); build_a_logic_core; install_a_logic_into_ecms; export_ecms_traceability"
 
       - name: Upload generated ECMS logic core and install report
         if: always()
@@ -33,6 +38,9 @@ jobs:
             outputs/TripLens_ECMS_A_Logic_Core.slx
             outputs/ecms_a_logic_core_report.json
             outputs/ecms_a_logic_install_report.json
+            outputs/ecms_port_traceability.csv
+            outputs/ecms_traceability_report.json
+            outputs/ecms_traceability_report.html
+            outputs/ecms_protection_control.png
           if-no-files-found: warn
           retention-days: 30
-
