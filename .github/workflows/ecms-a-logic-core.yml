@@ -1,0 +1,36 @@
+name: Build ECMS A Logic Core
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ecms_logic/**'
+      - '.github/workflows/ecms-a-logic-core.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-a-logic-core:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Generate and validate A-program ECMS Simulink core
+        shell: cmd
+        run: |
+          "C:\Program Files\MATLAB\R2025b\bin\matlab.exe" -batch "addpath(fullfile(getenv('GITHUB_WORKSPACE'),'ecms_logic')); build_a_logic_core"
+
+      - name: Upload generated ECMS logic core
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ecms-a-logic-core-${{ github.run_number }}
+          path: |
+            outputs/TripLens_ECMS_A_Logic_Core.slx
+            outputs/ecms_a_logic_core_report.json
+          if-no-files-found: warn
+          retention-days: 30
