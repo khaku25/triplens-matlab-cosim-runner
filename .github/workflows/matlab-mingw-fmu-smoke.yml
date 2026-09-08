@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
     paths:
+      - 'ci/matlab_mingw_fmu_smoke.m'
       - '.github/workflows/matlab-mingw-fmu-smoke.yml'
   workflow_dispatch:
 
@@ -31,7 +32,7 @@ jobs:
       - name: Select MinGW and compile cloud FMU sources
         shell: cmd
         run: |
-          "C:\Program Files\MATLAB\R2025b\bin\matlab.exe" -batch "repo=getenv('GITHUB_WORKSPACE'); h=dir(fullfile(repo,'fmu_artifact','**','TripLens_CombinedCycle_TripTAC_CoSim.fmu')); assert(~isempty(h),'FMU missing'); src=fullfile(h(1).folder,h(1).name); outDir=fullfile(repo,'outputs'); if ~isfolder(outDir),mkdir(outDir);end; fmu=fullfile(outDir,'TripLens_CombinedCycle_TripTAC_CoSim_win64.fmu'); copyfile(src,fmu,'f'); c=mex.getCompilerConfigurations('C','Installed'); for k=1:numel(c), disp(string(c(k).Name)+" | "+string(c(k).Manufacturer)+" | "+string(c(k).MexOpt)); end; idx=find(arrayfun(@(x) contains(lower(string(x.Name)),'mingw') || contains(lower(string(x.Manufacturer)),'gnu'),c),1); assert(~isempty(idx),'MinGW C compiler configuration not found'); mex(['-setup:' c(idx).MexOpt],'C'); s=mex.getCompilerConfigurations('C','Selected'); disp("SELECTED="+string(s.Name)+" | "+string(s.Manufacturer)+" | "+string(s.MexOpt)); assert(contains(lower(string(s.Name)),'mingw') || contains(lower(string(s.Manufacturer)),'gnu'),'MinGW was not selected'); try, fmudialog.compileFMUSources(fmu,'FMUMode','Co-Simulation'); catch ME, disp(getReport(ME,'extended','hyperlinks','off')); rethrow(ME); end; d=fullfile(outDir,'fmu_inspect'); if isfolder(d),rmdir(d,'s');end; mkdir(d); unzip(fmu,d); w=dir(fullfile(d,'binaries','win64','*')); assert(~isempty(w),'Compiled FMU has no win64 binary'); disp("WIN64_FMU_PASS files="+string(numel(w))); rmdir(d,'s');"
+          "C:\Program Files\MATLAB\R2025b\bin\matlab.exe" -batch "addpath(fullfile(getenv('GITHUB_WORKSPACE'),'ci')); matlab_mingw_fmu_smoke"
 
       - name: Upload Windows-ready FMU
         if: success()
