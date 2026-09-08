@@ -1,6 +1,5 @@
 function report = run_bfp_physical_cosim(varargin)
 %RUN_BFP_PHYSICAL_COSIM Run a real ThermoSysPro HP BFP trip under MATLAB control.
-% MATLAB is the master launcher; OpenModelica performs the ThermoSysPro physics.
 
 p = inputParser;
 addParameter(p,"TripTime",300,@(x)isnumeric(x)&&isscalar(x)&&x>0);
@@ -33,7 +32,7 @@ mosFile = fullfile(buildDir,"run_bfp_physical.mos");
 resultBase = "TripLens_BFP_PhysicalTrip";
 mos = compose([ ...
     'setCommandLineOptions("--matchingAlgorithm=PFPlusExt --indexReductionMethod=dynamicStateSelection");\n' ...
-    'loadModel(Modelica,{"4.0.0"});\n' ...
+    'loadModel(Modelica,{"3.2.3"});\n' ...
     'getErrorString();\n' ...
     'loadFile("%s");\n' ...
     'getErrorString();\n' ...
@@ -46,19 +45,14 @@ mos = compose([ ...
     slash(packageFile), slash(wrapperFile), opt.StopTime, round(opt.Intervals), resultBase, opt.TripTime, opt.RampDuration);
 writeText(mosFile,mos);
 
-% OpenModelica on Windows uses user profile paths for its package manager.
-% Force those paths to an ASCII-only workspace so Korean Windows usernames do not break iconv/file IO.
 oldHome = getenv('HOME'); oldUserProfile = getenv('USERPROFILE');
 oldAppData = getenv('APPDATA'); oldLocalAppData = getenv('LOCALAPPDATA');
-envCleanup = onCleanup(@() restoreOmEnv(oldHome,oldUserProfile,oldAppData,oldLocalAppData));
-setenv('HOME',omHome);
-setenv('USERPROFILE',omHome);
-setenv('APPDATA',omAppData);
-setenv('LOCALAPPDATA',omLocalAppData);
+envCleanup = onCleanup(@() restoreOmEnv(oldHome,oldUserProfile,oldAppData,oldLocalAppData)); %#ok<NASGU>
+setenv('HOME',omHome); setenv('USERPROFILE',omHome);
+setenv('APPDATA',omAppData); setenv('LOCALAPPDATA',omLocalAppData);
 fprintf("OpenModelica ASCII HOME: %s\n",omHome);
 
-old = pwd;
-cleanup = onCleanup(@() cd(old));
+old = pwd; cleanup = onCleanup(@() cd(old)); %#ok<NASGU>
 cd(buildDir);
 cmd = sprintf('"%s" "%s"',omc,mosFile);
 fprintf("Running real ThermoSysPro physics via OpenModelica...\n%s\n",cmd);
@@ -66,6 +60,9 @@ fprintf("Running real ThermoSysPro physics via OpenModelica...\n%s\n",cmd);
 writeText(fullfile(outDir,"openmodelica_bfp.log"),logText);
 if status ~= 0
     error("TripLens:OpenModelicaFailed","OpenModelica failed with exit code %d. See outputs/openmodelica_bfp.log",status);
+end
+if contains(logText,"simulation terminated by an assertion") || contains(logText,"Simulation execution failed")
+    error("TripLens:SimulationInitializationFailed","ThermoSysPro simulation failed during initialization. See outputs/openmodelica_bfp.log");
 end
 
 csvFile = fullfile(buildDir,resultBase + "_res.csv");
@@ -79,42 +76,39 @@ end
 copyfile(csvFile,fullfile(outDir,"bfp_physical_result.csv"));
 
 T = readtable(csvFile,"VariableNamingRule","preserve");
+if height(T) < 2
+    error("TripLens:EmptyResult","OpenModelica produced a header-only CSV, meaning the simulation did not advance. See outputs/openmodelica_bfp.log");
+end
 required = ["time","hpBfpRpm","hpFeedwaterFlow","hpDrumLevel","hpDrumPressure"];
 for k=1:numel(required)
     assert(any(string(T.Properties.VariableNames)==required(k)),"TripLens:MissingSignal","Result missing %s",required(k));
 end
 
 t = T.("time");
+fprintf("Result time range: %.6g to %.6g s (%d rows)\n",min(t),max(t),height(T));
 preMask = t >= max(0,opt.TripTime-20) & t < opt.TripTime;
 postMask = t >= min(opt.StopTime,opt.TripTime+opt.RampDuration+5) & t <= min(opt.StopTime,opt.TripTime+opt.RampDuration+30);
-assert(any(preMask)&&any(postMask),"TripLens:InsufficientWindow","Simulation result does not cover pre/post trip windows.");
+assert(any(preMask)&&any(postMask),"TripLens:InsufficientWindow","Simulation result does not cover pre/post trip windows. Time range %.6g..%.6g s",min(t),max(t));
 
 rpm = T.("hpBfpRpm"); fw = T.("hpFeedwaterFlow"); dl = T.("hpDrumLevel"); dp = T.("hpDrumPressure");
 report = struct;
 report.Status = "PASS";
 report.Engine = "MATLAB master + OpenModelica ThermoSysPro 4.2";
+report.ModelicaStandardLibrary = "3.2.3";
 report.PhysicsModel = "ThermoSysPro.Fluid.Examples.CombinedCyclePowerPlant.CombinedCycle_TripTAC";
 report.TripMechanism = "HP BFP rpm ramp 1400 -> 0 using native StaticCentrifugalPump.rpm_or_mpower path";
-report.TripTime_s = opt.TripTime;
-report.RampDuration_s = opt.RampDuration;
-report.StopTime_s = opt.StopTime;
-report.PreBfpRpm = median(rpm(preMask),"omitnan");
-report.PostBfpRpm = median(rpm(postMask),"omitnan");
-report.PreFeedwaterFlow_kg_s = median(fw(preMask),"omitnan");
-report.PostFeedwaterFlow_kg_s = median(fw(postMask),"omitnan");
-report.PreDrumLevel_m = median(dl(preMask),"omitnan");
-report.PostDrumLevel_m = median(dl(postMask),"omitnan");
-report.PreDrumPressure_Pa = median(dp(preMask),"omitnan");
-report.PostDrumPressure_Pa = median(dp(postMask),"omitnan");
+report.TripTime_s = opt.TripTime; report.RampDuration_s = opt.RampDuration; report.StopTime_s = opt.StopTime;
+report.PreBfpRpm = median(rpm(preMask),"omitnan"); report.PostBfpRpm = median(rpm(postMask),"omitnan");
+report.PreFeedwaterFlow_kg_s = median(fw(preMask),"omitnan"); report.PostFeedwaterFlow_kg_s = median(fw(postMask),"omitnan");
+report.PreDrumLevel_m = median(dl(preMask),"omitnan"); report.PostDrumLevel_m = median(dl(postMask),"omitnan");
+report.PreDrumPressure_Pa = median(dp(preMask),"omitnan"); report.PostDrumPressure_Pa = median(dp(postMask),"omitnan");
 report.RpmTripVerified = report.PreBfpRpm > 1000 && report.PostBfpRpm < 100;
 report.FeedwaterResponded = abs(report.PostFeedwaterFlow_kg_s-report.PreFeedwaterFlow_kg_s) > 1e-6;
 report.DrumResponded = abs(report.PostDrumLevel_m-report.PreDrumLevel_m) > 1e-8 || abs(report.PostDrumPressure_Pa-report.PreDrumPressure_Pa) > 1;
 report.PhysicalLinkVerified = report.RpmTripVerified && report.FeedwaterResponded;
 
 writeText(fullfile(outDir,"bfp_physical_summary.json"),jsonencode(report,PrettyPrint=true));
-S = struct2table(report,"AsArray",true);
-writetable(S,fullfile(outDir,"bfp_physical_summary.csv"));
-
+writetable(struct2table(report,"AsArray",true),fullfile(outDir,"bfp_physical_summary.csv"));
 fprintf("BFP RPM: %.3f -> %.3f rpm\n",report.PreBfpRpm,report.PostBfpRpm);
 fprintf("HP feedwater: %.6g -> %.6g kg/s\n",report.PreFeedwaterFlow_kg_s,report.PostFeedwaterFlow_kg_s);
 fprintf("HP drum level: %.6g -> %.6g m\n",report.PreDrumLevel_m,report.PostDrumLevel_m);
@@ -127,11 +121,7 @@ function root = resolveThermoSysProRoot(repoRoot)
 vendorLibrary = fullfile(repoRoot,'vendor','ThermoSysPro','ThermoSysPro');
 vendorPackage = fullfile(vendorLibrary,'package.mo');
 fprintf("Checking vendored ThermoSysPro: %s\n",vendorPackage);
-if isfile(vendorPackage)
-    root = vendorLibrary;
-    fprintf("Using vendored ThermoSysPro: %s\n",root);
-    return;
-end
+if isfile(vendorPackage), root = vendorLibrary; fprintf("Using vendored ThermoSysPro: %s\n",root); return; end
 raw = getenv('TRIPLENS_THERMOSYSPRO_ROOT');
 if ~isempty(raw)
     directPackage = fullfile(raw,'package.mo'); nestedLibrary = fullfile(raw,'ThermoSysPro'); nestedPackage = fullfile(nestedLibrary,'package.mo');
@@ -153,8 +143,7 @@ if status==0
 end
 roots = ["C:\OpenModelica*\bin\omc.exe"; "C:\Program Files\OpenModelica*\bin\omc.exe"];
 for pat = roots'
-    d = dir(pat);
-    if ~isempty(d), exe = fullfile(d(1).folder,d(1).name); return; end
+    d = dir(pat); if ~isempty(d), exe = fullfile(d(1).folder,d(1).name); return; end
 end
 error("TripLens:OmcNotFound","OpenModelica omc.exe was not found on this PC.");
 end
@@ -162,11 +151,8 @@ end
 function restoreOmEnv(h,u,a,l)
 setenv('HOME',h); setenv('USERPROFILE',u); setenv('APPDATA',a); setenv('LOCALAPPDATA',l);
 end
-
-function s = slash(path)
-s = replace(string(path),"\","/");
-end
-
+function s = slash(path), s = replace(string(path),"\","/"); end
 function writeText(file,text)
-fid = fopen(file,"w"); assert(fid>=0,"TripLens:WriteFailed","Cannot write %s",file); c = onCleanup(@() fclose(fid)); fwrite(fid,char(text),"char");
+fid = fopen(file,"w"); assert(fid>=0,"TripLens:WriteFailed","Cannot write %s",file); c = onCleanup(@() fclose(fid)); %#ok<NASGU>
+fwrite(fid,char(text),"char");
 end
