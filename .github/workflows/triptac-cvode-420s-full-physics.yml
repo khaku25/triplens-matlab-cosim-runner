@@ -1,0 +1,83 @@
+name: TripTAC CVODE 420s Full Physics Stability
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ci/cvode/probe_cvode_long_all_vars.py'
+      - 'ci/matlab_cvode_long_baseline.m'
+      - '.github/workflows/triptac-cvode-420s-full-physics.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: triptac-cvode-420s-full-physics
+  cancel-in-progress: true
+
+jobs:
+  linux-full-inventory:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      TRIPLENS_USE_NATIVE_SEED: '1'
+      TRIPLENS_RETAIN_VALIDATED_NLS_GUESS: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: cvode-build-linux64-4
+          run-id: 34233967732
+          github-token: ${{ github.token }}
+          path: source_fmu
+      - name: Install independent FMI importer
+        run: python3 -m pip install 'fmpy==0.3.22'
+      - name: Run 420 seconds and audit the full FMI physical variable inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p long_results
+          python3 ci/cvode/probe_cvode_long_all_vars.py \
+            --fmu source_fmu/TripLens_CombinedCycle_TripTAC_CoSim_linux64.fmu \
+            --out long_results --stop 420 --step 0.1 --audit-step 1.0 \
+            2>&1 | tee long_results/run.log
+          grep -q 'CVODE_420S_FULL_VARIABLE_STABILITY_PASS' long_results/run.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cvode-420s-full-inventory-${{ github.run_number }}
+          path: long_results/
+          if-no-files-found: warn
+          retention-days: 30
+
+  windows-simulink-420s:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 45
+    env:
+      TRIPLENS_USE_NATIVE_SEED: '1'
+      TRIPLENS_RETAIN_VALIDATED_NLS_GUESS: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: cvode-build-win64-4
+          run-id: 34233967732
+          github-token: ${{ github.token }}
+          path: outputs
+      - name: Installed MATLAB R2025b actual 420 second Simulink run
+        shell: cmd
+        run: |
+          "C:\Program Files\MATLAB\R2025b\bin\matlab.exe" -batch "cd(getenv('GITHUB_WORKSPACE')); addpath(fullfile(pwd,'ci')); matlab_cvode_long_baseline"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cvode-simulink-420s-${{ github.run_number }}
+          path: outputs/
+          if-no-files-found: warn
+          retention-days: 30
