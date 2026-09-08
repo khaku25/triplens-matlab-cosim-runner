@@ -87,12 +87,19 @@ jobs:
           if exist legacy_exact\build\winfmu rmdir /s /q legacy_exact\build\winfmu
           if exist fmu_artifact rmdir /s /q fmu_artifact
           if exist omlib rmdir /s /q omlib
+          if exist omprofile rmdir /s /q omprofile
+          if exist omtmp rmdir /s /q omtmp
           mkdir legacy_exact\vendor 2>nul
           mkdir legacy_exact\build\winfmu 2>nul
           mkdir fmu_artifact\cosim 2>nul
           mkdir omlib 2>nul
+          mkdir omprofile\AppData\Roaming\.openmodelica 2>nul
+          mkdir omprofile\AppData\Local 2>nul
+          mkdir omtmp 2>nul
           if not exist modelica_bundle\modelica323_bundle.tar.gz exit /b 1
           tar -xzf modelica_bundle\modelica323_bundle.tar.gz -C omlib
+          xcopy /E /I /Q /Y omlib\libraries omprofile\AppData\Roaming\.openmodelica\libraries >nul
+          if not exist omprofile\AppData\Roaming\.openmodelica\libraries\index.json exit /b 1
           dir /s /b omlib\libraries\*package.mo
           "C:\Program Files\Git\cmd\git.exe" clone --no-checkout https://github.com/Dwarf-Planet-Project/ThermoSysPro.git legacy_exact\vendor\ThermoSysPro
           if errorlevel 1 exit /b 1
@@ -105,7 +112,11 @@ jobs:
       - name: Build FMI 2.0 Co-Simulation FMU with offline Windows OpenModelica
         shell: cmd
         run: |
-          set "OPENMODELICALIBRARY=T:\omlib\libraries"
+          set "APPDATA=T:\omprofile\AppData\Roaming"
+          set "LOCALAPPDATA=T:\omprofile\AppData\Local"
+          set "TEMP=T:\omtmp"
+          set "TMP=T:\omtmp"
+          set "OPENMODELICALIBRARY=T:\omlib\libraries;T:\omprofile\AppData\Roaming\.openmodelica\libraries"
           "C:\Program Files\OpenModelica1.28.0-dev-64bit\bin\omc.exe" T:\legacy_exact\modelica\export_windows_triptac_fmu.mos > T:\legacy_exact\build\winfmu\export_windows_fmu.log 2>&1
           type T:\legacy_exact\build\winfmu\export_windows_fmu.log
           findstr /c:"Check of ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_CombinedCycle_TripTAC_CoSim completed successfully" T:\legacy_exact\build\winfmu\export_windows_fmu.log >nul || exit /b 1
