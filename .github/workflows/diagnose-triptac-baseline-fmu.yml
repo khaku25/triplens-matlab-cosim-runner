@@ -1,0 +1,104 @@
+name: Diagnose Table-Based TripTAC FMU
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/diagnose-triptac-baseline-fmu.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-baseline-fmu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Prepare pinned ThermoSysPro
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf legacy_exact/vendor/ThermoSysPro legacy_exact/build/baseline_fmu
+          mkdir -p legacy_exact/vendor legacy_exact/build/baseline_fmu/omhome
+          git clone --no-checkout https://github.com/Dwarf-Planet-Project/ThermoSysPro.git legacy_exact/vendor/ThermoSysPro
+          git -C legacy_exact/vendor/ThermoSysPro checkout --detach db81ae1b5a6a85f6c6c7693244cafa6087e18ff5
+          test "$(git -C legacy_exact/vendor/ThermoSysPro rev-parse HEAD)" = "db81ae1b5a6a85f6c6c7693244cafa6087e18ff5"
+
+      - name: Render known-good table-based TripTAC wrapper
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 legacy_exact/scripts/render_modelica.py \
+            --trip-time 600 \
+            --trip-ramp-duration 5 \
+            --stop-time 1000 \
+            --intervals 10000
+          test -s legacy_exact/build/TripLens_CombinedCycle_TripTAC.mo
+
+      - name: Install Modelica 3.2.3
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$PWD/legacy_exact/build/baseline_fmu/omhome:/root" \
+            -v "$PWD/legacy_exact:/workspace" \
+            -w /workspace \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            omc /workspace/modelica/install_dependencies.mos
+
+      - name: Export unchanged table-boundary model as FMI 2.0 CS
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' \
+            'setCommandLineOptions("--std=3.4");' \
+            'loadModel(Modelica, {"3.2.3"});' \
+            'getErrorString();' \
+            'loadFile("/workspace/vendor/ThermoSysPro/ThermoSysPro/package.mo");' \
+            'getErrorString();' \
+            'loadFile("/workspace/build/TripLens_CombinedCycle_TripTAC.mo");' \
+            'getErrorString();' \
+            'cd("/workspace/build/baseline_fmu");' \
+            'checkModel(TripLens_CombinedCycle_TripTAC);' \
+            'getErrorString();' \
+            'buildModelFMU(TripLens_CombinedCycle_TripTAC, version="2.0", fmuType="cs", fileNamePrefix="TripLens_TripTAC_Table_Baseline");' \
+            'getErrorString();' \
+            > legacy_exact/build/baseline_fmu/export_baseline_fmu.mos
+          docker run --rm \
+            -v "$PWD/legacy_exact/build/baseline_fmu/omhome:/root" \
+            -v "$PWD/legacy_exact:/workspace" \
+            -w /workspace \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            omc /workspace/build/baseline_fmu/export_baseline_fmu.mos | tee legacy_exact/build/baseline_fmu/export_baseline_fmu.log
+          test -s legacy_exact/build/baseline_fmu/TripLens_TripTAC_Table_Baseline.fmu
+
+      - name: Verify diagnostic FMU payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import zipfile
+          p = 'legacy_exact/build/baseline_fmu/TripLens_TripTAC_Table_Baseline.fmu'
+          with zipfile.ZipFile(p) as z:
+              xml = z.read('modelDescription.xml').decode('utf-8')
+              names = set(z.namelist())
+          assert '<CoSimulation' in xml
+          assert any(x.startswith('binaries/linux64/') and x.endswith('.so') for x in names)
+          assert 'gtExhaustFlowCmd' not in xml
+          print('TABLE_BASELINE_FMU_BUILD_PASS')
+          PY
+
+      - name: Upload baseline diagnostic FMU
+        uses: actions/upload-artifact@v4
+        with:
+          name: triptac-table-baseline-fmu-${{ github.run_number }}
+          path: |
+            legacy_exact/build/baseline_fmu/TripLens_TripTAC_Table_Baseline.fmu
+            legacy_exact/build/baseline_fmu/export_baseline_fmu.log
+            legacy_exact/build/TripLens_CombinedCycle_TripTAC.mo
+          if-no-files-found: error
+          retention-days: 14
