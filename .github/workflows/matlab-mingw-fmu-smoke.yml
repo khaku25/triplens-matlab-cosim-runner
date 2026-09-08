@@ -1,0 +1,43 @@
+name: MATLAB MinGW Cloud FMU Smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/matlab-mingw-fmu-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  mingw-fmu-smoke:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Download validated cloud TripTAC FMU
+        uses: actions/download-artifact@v4
+        with:
+          name: triplens-triptac-cosim-fmu-4
+          path: fmu_artifact
+          repository: khaku25/triplens-matlab-cosim-runner
+          run-id: 34199738020
+          github-token: ${{ github.token }}
+
+      - name: Select MinGW and compile cloud FMU sources
+        shell: cmd
+        run: |
+          "C:\Program Files\MATLAB\R2025b\bin\matlab.exe" -batch "repo=getenv('GITHUB_WORKSPACE'); h=dir(fullfile(repo,'fmu_artifact','**','TripLens_CombinedCycle_TripTAC_CoSim.fmu')); assert(~isempty(h),'FMU missing'); src=fullfile(h(1).folder,h(1).name); outDir=fullfile(repo,'outputs'); if ~isfolder(outDir),mkdir(outDir);end; fmu=fullfile(outDir,'TripLens_CombinedCycle_TripTAC_CoSim_win64.fmu'); copyfile(src,fmu,'f'); c=mex.getCompilerConfigurations('C','Installed'); for k=1:numel(c), fprintf('COMPILER[%d]=%s | %s | %s\n',k,c(k).Name,c(k).Manufacturer,c(k).MexOpt); end; idx=find(arrayfun(@(x) contains(lower(string(x.Name)),'mingw') || contains(lower(string(x.Manufacturer)),'gnu'),c),1); assert(~isempty(idx),'MinGW C compiler configuration not found'); mex(['-setup:' c(idx).MexOpt],'C'); s=mex.getCompilerConfigurations('C','Selected'); fprintf('SELECTED=%s | %s | %s\n',s.Name,s.Manufacturer,s.MexOpt); assert(contains(lower(string(s.Name)),'mingw') || contains(lower(string(s.Manufacturer)),'gnu'),'MinGW was not selected'); try, fmudialog.compileFMUSources(fmu,'FMUMode','Co-Simulation'); catch ME, disp(getReport(ME,'extended','hyperlinks','off')); rethrow(ME); end; d=fullfile(outDir,'fmu_inspect'); if isfolder(d),rmdir(d,'s');end; mkdir(d); unzip(fmu,d); w=dir(fullfile(d,'binaries','win64','*')); assert(~isempty(w),'Compiled FMU has no win64 binary'); fprintf('WIN64_FMU_PASS files=%d\n',numel(w)); rmdir(d,'s');"
+
+      - name: Upload Windows-ready FMU
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: triptac-cloud-fmu-win64-mingw-${{ github.run_number }}
+          path: outputs/TripLens_CombinedCycle_TripTAC_CoSim_win64.fmu
+          if-no-files-found: error
+          retention-days: 30
