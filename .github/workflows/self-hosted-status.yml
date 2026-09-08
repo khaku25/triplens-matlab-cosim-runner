@@ -1,0 +1,24 @@
+name: Check Self-Hosted Runner
+
+on:
+  push:
+    paths:
+      - '.github/workflows/self-hosted-status.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  status:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 5
+    steps:
+      - name: Show runner status
+        shell: cmd
+        run: |
+          echo RUNNER_ONLINE
+          echo Runner: %RUNNER_NAME%
+          echo Machine: %COMPUTERNAME%
+          where matlab.exe >nul 2>nul && (echo MATLAB_ON_PATH) || (echo MATLAB_NOT_ON_PATH)
+          exit /b 0
