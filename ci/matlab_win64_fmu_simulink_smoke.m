@@ -43,11 +43,16 @@ add_block('simulink/Sources/Constant',[mdl '/GT_Flow'], ...
 add_block('simulink/Sources/Constant',[mdl '/GT_Temperature'], ...
     'Value','893.75','Position',[30 145 100 175]);
 
-add_block('simulink_extras/FMU Import/FMU',[mdl '/Thermo_FMU'], ...
+fmuBlock = [mdl '/Thermo_FMU'];
+add_block('simulink_extras/FMU Import/FMU',fmuBlock, ...
     'FMUName',fmuName,'Position',[190 45 510 285]);
-set_param([mdl '/Thermo_FMU'],'FMUInputMapping','Flat','FMUOutputMapping','Flat');
+set_param(fmuBlock, ...
+    'FMUInputMapping','Flat', ...
+    'FMUOutputMapping','Flat', ...
+    'FMUDebugLogging','on', ...
+    'FMUDebugLoggingRedirect','File');
 
-ph = get_param([mdl '/Thermo_FMU'],'PortHandles');
+ph = get_param(fmuBlock,'PortHandles');
 disp("SIMULINK_FMU_INPUT_PORTS=" + string(numel(ph.Inport)));
 disp("SIMULINK_FMU_OUTPUT_PORTS=" + string(numel(ph.Outport)));
 assert(numel(ph.Inport)==2,'TripLens:FMUInputCount', ...
@@ -79,7 +84,16 @@ slxPath = fullfile(outDir,[mdl '.slx']);
 save_system(mdl,slxPath);
 disp("SIMULINK_MODEL_SAVED=" + string(slxPath));
 
-simOut = sim(mdl,'ReturnWorkspaceOutputs','on');
+try
+    simOut = sim(mdl,'ReturnWorkspaceOutputs','on');
+catch ME
+    disp('SIMULINK_FMU_SIM_FAILED_BEGIN');
+    dumpFmuLogs(repo,outDir);
+    disp(getReport(ME,'extended','hyperlinks','off'));
+    disp('SIMULINK_FMU_SIM_FAILED_END');
+    rethrow(ME);
+end
+
 st = simOut.get('stElectricalPower_out');
 hp = simOut.get('hpDrumLevel_out');
 assert(~isempty(st),'TripLens:NoSTPower','No ST electrical power output returned from FMU.');
@@ -91,6 +105,8 @@ disp("ST_POWER_FIRST=" + string(st(1)));
 disp("ST_POWER_LAST=" + string(st(end)));
 disp("HP_DRUM_LEVEL_FIRST=" + string(hp(1)));
 disp("HP_DRUM_LEVEL_LAST=" + string(hp(end)));
+
+dumpFmuLogs(repo,outDir);
 
 reportPath = fullfile(outDir,'triptac_win64_fmu_simulink_smoke.txt');
 fid = fopen(reportPath,'w');
@@ -106,6 +122,24 @@ fclose(fid);
 
 disp('SIMULINK WIN64 FMU SMOKE PASS');
 bdclose(mdl);
+end
+
+function dumpFmuLogs(repo,outDir)
+logHits = dir(fullfile(repo,'slprj','**','*.txt'));
+fprintf('FMU_DEBUG_LOG_COUNT=%d\n',numel(logHits));
+logOut = fullfile(outDir,'fmu_debug_logs');
+if ~isfolder(logOut), mkdir(logOut); end
+for k = 1:numel(logHits)
+    p = fullfile(logHits(k).folder,logHits(k).name);
+    fprintf('FMU_DEBUG_LOG_%d=%s\n',k,p);
+    try
+        txt = fileread(p);
+        fprintf('----- FMU DEBUG LOG %d BEGIN -----\n%s\n----- FMU DEBUG LOG %d END -----\n',k,txt,k);
+        copyfile(p,fullfile(logOut,sprintf('%03d_%s',k,logHits(k).name)),'f');
+    catch logME
+        fprintf('FMU_DEBUG_LOG_READ_FAILED_%d=%s\n',k,logME.message);
+    end
+end
 end
 
 function localCloseModel(mdl)
