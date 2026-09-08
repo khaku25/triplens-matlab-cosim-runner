@@ -1,0 +1,66 @@
+name: TripTAC CVODE GT Trip 120s Full Physics
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ci/cvode/probe_gt_trip_120s.py'
+      - '.github/workflows/triptac-cvode-gt-trip-120s.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: triptac-cvode-gt-trip-120s
+  cancel-in-progress: true
+
+jobs:
+  gt-trip-120s-all-physics:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      TRIPLENS_USE_NATIVE_SEED: '1'
+      TRIPLENS_RETAIN_VALIDATED_NLS_GUESS: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Download exact proven CVODE FMU from Run4
+        uses: actions/download-artifact@v4
+        with:
+          name: cvode-build-linux64-4
+          run-id: 34233967732
+          github-token: ${{ github.token }}
+          path: proven
+      - name: Install independent FMI importer and HDF5 writer
+        run: python3 -m pip install 'fmpy==0.3.22' 'h5py==3.12.1'
+      - name: Actual 120 second GT trip with full dynamic inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p results
+          python3 ci/cvode/probe_gt_trip_120s.py \
+            --fmu proven/TripLens_CombinedCycle_TripTAC_CoSim_linux64.fmu \
+            --out results --stop 120 --step 0.1 \
+            2> >(grep --line-buffered -E 'TRIPLENS_FMI_INTERNAL_SOLVER|TRIPLENS_CVODE_FMI_CALLBACK_CLEANUP_PASS|ERROR|Error|error|assert|CVODE' | tee results/runtime_key.log >&2)
+          python3 - <<'PY'
+          import json
+          r=json.load(open('results/gt_trip_120s_report.json'))
+          assert r['status']=='pass'
+          assert r['last_completed_time_s']>=120
+          assert r['samples']==1201
+          assert r['dynamic_variable_count']==12897
+          assert r['unit_bearing_physical_real_count']==8620
+          assert r['all_unit_bearing_real_finite'] is True
+          print('PROVEN_CVODE_GT_TRIP_120S_FULL_PHYSICS_PASS')
+          print(json.dumps(r['pretrip_to_end'],indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: proven-gt-trip-120s-full-physics
+          path: results/
+          if-no-files-found: warn
+          retention-days: 30
