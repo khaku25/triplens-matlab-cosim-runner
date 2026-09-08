@@ -14,7 +14,7 @@ permissions:
 
 concurrency:
   group: triptac-selector-initialization-probe
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   source-fmu:
@@ -31,7 +31,7 @@ jobs:
           git -C legacy_exact/vendor/ThermoSysPro checkout --detach db81ae1b5a6a85f6c6c7693244cafa6087e18ff5
           test "$(git -C legacy_exact/vendor/ThermoSysPro rev-parse HEAD)" = db81ae1b5a6a85f6c6c7693244cafa6087e18ff5
           python3 ci/build_triptac_selector_probe.py
-      - name: Export selector FMU with original tables preserved
+      - name: Export source-only selector FMU with original tables preserved
         shell: bash
         run: |
           set -euo pipefail
@@ -51,7 +51,7 @@ jobs:
           cd("/workspace/build/selector_probe");
           checkModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_CombinedCycle_TripTAC_CoSim);
           getErrorString();
-          buildModelFMU(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_CombinedCycle_TripTAC_CoSim,
+          translateModelFMU(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_CombinedCycle_TripTAC_CoSim,
             version="2.0", fmuType="cs", fileNamePrefix="TripLens_CombinedCycle_TripTAC_CoSim");
           getErrorString();
           MOS
