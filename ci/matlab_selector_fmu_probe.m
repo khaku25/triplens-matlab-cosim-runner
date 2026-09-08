@@ -1,6 +1,6 @@
 function matlab_selector_fmu_probe()
 % Isolated integration probe, not an ECMS scenario or a plant safety model.
-% Never infer port order from Modelica declaration order: read the FMU XML.
+% Read XML port order; initialize master signals before FMU initialization.
 repo = getenv('GITHUB_WORKSPACE');
 if isempty(repo), repo = pwd; end
 outDir = fullfile(repo,'outputs');
@@ -15,15 +15,11 @@ vars = doc.getElementsByTagName('ScalarVariable');
 inputs = {}; outputs = {}; starts = []; units = {};
 for k = 0:vars.getLength-1
     v = vars.item(k);
-    name = char(v.getAttribute('name'));
-    causality = char(v.getAttribute('causality'));
-    if strcmp(causality,'input')
-        inputs{end+1} = name; %#ok<AGROW>
-        realNode = v.getElementsByTagName('Real').item(0);
-        starts(end+1) = str2double(char(realNode.getAttribute('start'))); %#ok<AGROW>
+    if strcmp(char(v.getAttribute('causality')),'input')
+        inputs{end+1} = char(v.getAttribute('name')); %#ok<AGROW>
+        starts(end+1) = str2double(char(v.getElementsByTagName('Real').item(0).getAttribute('start'))); %#ok<AGROW>
     end
 end
-% FMI ModelStructure determines the exported output sequence.
 outs = doc.getElementsByTagName('Outputs').item(0).getElementsByTagName('Unknown');
 for k = 0:outs.getLength-1
     idx = str2double(char(outs.item(k).getAttribute('index')));
@@ -33,20 +29,21 @@ for k = 0:outs.getLength-1
     units{end+1} = char(v.getElementsByTagName('Real').item(0).getAttribute('unit')); %#ok<AGROW>
 end
 assert(numel(inputs)==2 && numel(outputs)==7,'Unexpected selector interface.');
-assert(all(isfinite(starts)) && all(starts>0),'Input initialization defaults must be nonzero.');
+assert(all(isfinite(starts)) && all(starts>0),'Input defaults must be nonzero.');
 expected = {'hpDrumLevel','hpDrumPressure','ipDrumLevel','ipDrumPressure','lpDrumLevel','lpDrumPressure','stElectricalPower'};
 assert(isequal(sort(outputs),sort(expected)),'Output name mismatch.');
+step = 0.001; stopTime = 0.2;
 map = struct('inputs',{inputs},'input_start',starts,'outputs',{outputs},'units',{units}, ...
-    'source','modelDescription.xml ModelStructure, not declaration order');
+    'source','modelDescription.xml ModelStructure, not declaration order', ...
+    'baseline_source','Constant', 'step_case_source','Step plus Unit Delay with nominal initial condition', ...
+    'step_case_transport_delay_s',step,'command_change_s',0.1,'nominal_applied_change_s',0.1+step);
 writeJson(fullfile(outDir,'selector_port_map.json'),map);
 disp(jsonencode(map));
 copyfile(fullfile(inspectDir,'modelDescription.xml'),fullfile(outDir,'selector_modelDescription.xml'));
 rmdir(inspectDir,'s');
 addpath(outDir);
 pathCleanup = onCleanup(@() rmpath(outDir)); %#ok<NASGU>
-[~,stem,ext] = fileparts(fmu);
-fmuName = [stem ext];
-step = 0.001; stopTime = 0.2;
+[~,stem,ext] = fileparts(fmu); fmuName = [stem ext];
 caseNames = {'baseline','flow_step','temperature_step'};
 results = struct();
 for c = 1:numel(caseNames)
@@ -56,38 +53,48 @@ for c = 1:numel(caseNames)
     new_system(mdl);
     modelCleanup = onCleanup(@() closeProbe(mdl));
     blk = [mdl '/Thermo_FMU'];
-    add_block('simulink_extras/FMU Import/FMU',blk,'FMUName',fmuName, ...
-        'Position',[230 40 510 400]);
+    add_block('simulink_extras/FMU Import/FMU',blk,'FMUName',fmuName,'Position',[400 40 680 440]);
     set_param(blk,'FMUInputMapping','Flat','FMUOutputMapping','Flat', ...
-        'FMUSampleTime',num2str(step,17),'FMUDebugLogging','on', ...
-        'FMUDebugLoggingRedirect','File');
+        'FMUSampleTime',num2str(step,17),'FMUDebugLogging','on','FMUDebugLoggingRedirect','File');
     ph = get_param(blk,'PortHandles');
     assert(numel(ph.Inport)==2 && numel(ph.Outport)==7,'Port count mismatch.');
-    maskText = get_param(blk,'MaskDisplay');
     fid = fopen(fullfile(outDir,[caseName '_mask_display.txt']),'w');
-    fprintf(fid,'%s',maskText); fclose(fid);
+    fprintf(fid,'%s',get_param(blk,'MaskDisplay')); fclose(fid);
     for k = 1:numel(inputs)
         inputName = inputs{k};
         if strcmp(inputName,'gtExhaustFlowCmd')
-            first = 606.94;
-            last = first * (1 - 0.01*strcmp(caseName,'flow_step'));
+            first = 606.94; last = first*(1-0.01*strcmp(caseName,'flow_step'));
         elseif strcmp(inputName,'gtExhaustTemperatureCmd')
-            first = 893.75;
-            last = first * (1 - 0.005*strcmp(caseName,'temperature_step'));
+            first = 893.75; last = first*(1-0.005*strcmp(caseName,'temperature_step'));
         else
             error('TripLens:UnknownInput','Unexpected FMU input.');
         end
         source = [mdl '/' inputName];
-        add_block('simulink/Sources/Step',source,'Time','0.1', ...
-            'Before',num2str(first,17),'After',num2str(last,17), ...
-            'SampleTime',num2str(step,17),'Position',[30 60+90*k 170 90+90*k]);
-        add_line(mdl,[inputName '/1'],['Thermo_FMU/' num2str(k)],'autorouting','on');
+        if strcmp(caseName,'baseline')
+            add_block('simulink/Sources/Constant',source,'Value',num2str(first,17), ...
+                'Position',[30 60+100*k 170 90+100*k]);
+            appliedSource = inputName;
+        else
+            add_block('simulink/Sources/Step',source,'Time','0.1','Before',num2str(first,17), ...
+                'After',num2str(last,17),'SampleTime',num2str(step,17), ...
+                'Position',[30 60+100*k 170 90+100*k]);
+            appliedSource = ['Initialized_' inputName];
+            add_block('simulink/Discrete/Unit Delay',[mdl '/' appliedSource], ...
+                'InitialCondition',num2str(first,17),'SampleTime',num2str(step,17), ...
+                'Position',[230 60+100*k 300 90+100*k]);
+            add_line(mdl,[inputName '/1'],[appliedSource '/1'],'autorouting','on');
+        end
+        add_line(mdl,[appliedSource '/1'],['Thermo_FMU/' num2str(k)],'autorouting','on');
+        logName = ['applied_' inputName];
+        add_block('simulink/Sinks/To Workspace',[mdl '/' logName],'VariableName',logName, ...
+            'SaveFormat','Timeseries','SampleTime',num2str(step,17), ...
+            'Position',[230 410+60*k 390 440+60*k]);
+        add_line(mdl,[appliedSource '/1'],[logName '/1'],'autorouting','on');
     end
     for k = 1:numel(outputs)
         outputName = outputs{k};
-        sink = [mdl '/' outputName];
-        add_block('simulink/Sinks/To Workspace',sink,'VariableName',outputName, ...
-            'SaveFormat','Timeseries','Position',[610 25+55*k 820 50+55*k]);
+        add_block('simulink/Sinks/To Workspace',[mdl '/' outputName],'VariableName',outputName, ...
+            'SaveFormat','Timeseries','Position',[760 25+55*k 970 50+55*k]);
         add_line(mdl,['Thermo_FMU/' num2str(k)],[outputName '/1'],'autorouting','on');
         fprintf('OUTPUT_PORT_%d=%s [%s]\n',k,outputName,units{k});
     end
@@ -97,14 +104,20 @@ for c = 1:numel(caseNames)
     fprintf('SELECTOR_CASE_START=%s\n',caseName);
     try
         simOut = sim(mdl,'ReturnWorkspaceOutputs','on');
-        firstSeries = simOut.get(outputs{1});
-        times = firstSeries.Time(:);
+        firstSeries = simOut.get(outputs{1}); times = firstSeries.Time(:);
         assert(numel(times)>=2 && times(end)>=stopTime-step/2,'Simulation did not reach stop time.');
         values = zeros(numel(times),numel(outputs));
+        applied = zeros(numel(times),numel(inputs));
         for k = 1:numel(outputs)
             ts = simOut.get(outputs{k});
             assert(isequal(ts.Time(:),times),'Output times are not aligned.');
             values(:,k) = ts.Data(:);
+        end
+        for k = 1:numel(inputs)
+            ts = simOut.get(['applied_' inputs{k}]);
+            assert(isequal(ts.Time(:),times),'Input times are not aligned.');
+            applied(:,k) = ts.Data(:);
+            assert(abs(applied(1,k)-starts(k))<1e-8,'Actual initial input is not nominal.');
         end
         assert(all(isfinite(values(:))),'FMU output contains non-finite values.');
         st = values(:,strcmp(outputs,'stElectricalPower'));
@@ -117,9 +130,9 @@ for c = 1:numel(caseNames)
             end
             fprintf('%s FIRST=%.17g LAST=%.17g\n',outputs{k},values(1,k),values(end,k));
         end
-        T = array2table([times values],'VariableNames',[{'time_s'} outputs]);
+        T = array2table([times applied values],'VariableNames',[{'time_s'} inputs outputs]);
         writetable(T,fullfile(outDir,[caseName '.csv']));
-        save(fullfile(outDir,[caseName '.mat']),'times','values','inputs','outputs','units');
+        save(fullfile(outDir,[caseName '.mat']),'times','applied','values','inputs','outputs','units');
         results.(caseName) = struct('status','pass','samples',numel(times), ...
             'stop_time_s',times(end),'first',values(1,:),'last',values(end,:));
         if strcmp(caseName,'baseline')
@@ -150,26 +163,21 @@ writeJson(fullfile(outDir,'selector_probe_results.json'),results);
 disp('SELECTOR_INITIALIZATION_AND_TWO_INPUT_RESPONSE_PROBES_PASS');
 disp('THIS_IS_NOT_A_FULL_ECMS_CLOSED_LOOP_OR_VALIDATED_ACCIDENT_SCENARIO');
 end
-
 function collectLogs(repo,outDir,mdl,showTail)
-p = fullfile(repo,'slprj','_fmu',['_logs_' mdl]);
-hits = dir(fullfile(p,'*.txt'));
+hits = dir(fullfile(repo,'slprj','_fmu',['_logs_' mdl],'*.txt'));
 for k = 1:numel(hits)
     src = fullfile(hits(k).folder,hits(k).name);
     copyfile(src,fullfile(outDir,['debug_' hits(k).name]));
     if showTail
-        text = fileread(src);
-        lines = splitlines(string(text));
-        disp(join(lines(max(1,numel(lines)-100):end),newline));
+        lines = splitlines(string(fileread(src)));
+        disp(join(lines(max(1,numel(lines)-35):end),newline));
     end
 end
 end
-
 function writeJson(p,value)
 fid = fopen(p,'w'); assert(fid>=0);
 fprintf(fid,'%s\n',jsonencode(value,'PrettyPrint',true)); fclose(fid);
 end
-
 function closeProbe(mdl)
 if bdIsLoaded(mdl), bdclose(mdl); end
 end
