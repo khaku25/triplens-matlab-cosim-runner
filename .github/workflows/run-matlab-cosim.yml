@@ -10,8 +10,9 @@ on:
         description: Select validation or physical co-simulation stage
         required: true
         type: choice
-        default: bfp-cosim
+        default: legacy-exact
         options:
+          - legacy-exact
           - smoke
           - bfp-wrapper-check
           - bfp-cosim
@@ -54,63 +55,61 @@ jobs:
           echo Runner: %RUNNER_NAME%
           echo Machine: %COMPUTERNAME%
           echo Workspace: %GITHUB_WORKSPACE%
-          where omc.exe >nul 2>nul
-          if errorlevel 1 (echo OpenModelica: not on PATH; MATLAB will search standard install folders) else (where omc.exe)
           if exist "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" (echo Windows PowerShell: found) else (echo Windows PowerShell: MISSING & exit /b 1)
           exit /b 0
 
-      - name: Prepare ThermoSysPro 4.2 source
+      - name: Run exact legacy Action baseline
+        if: ${{ github.event_name == 'push' || inputs.mode == 'legacy-exact' }}
         shell: cmd
         run: |
-          if exist "vendor\ThermoSysPro\ThermoSysPro\package.mo" (
-            echo ThermoSysPro already present in vendor folder.
-            exit /b 0
-          )
+          "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File ".\scripts\run_legacy_exact.ps1" -TripTime 600 -TripRampDuration 5 -StopTime 1000 -Intervals 1000
+
+      - name: Upload exact legacy outputs
+        if: ${{ always() && (github.event_name == 'push' || inputs.mode == 'legacy-exact') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: triplens-legacy-exact-${{ github.run_number }}
+          path: |
+            outputs/legacy_exact/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Prepare ThermoSysPro source for experimental MATLAB path
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode != 'legacy-exact' }}
+        shell: cmd
+        run: |
+          if exist "vendor\ThermoSysPro\ThermoSysPro\package.mo" exit /b 0
           if exist "vendor\ThermoSysPro" rmdir /s /q "vendor\ThermoSysPro"
           mkdir vendor 2>nul
-          echo Cloning official ThermoSysPro source from GitLab...
           "C:\Program Files\Git\cmd\git.exe" clone --depth 1 https://gitlab.pam-retd.fr/thermosysproandco/ThermoSysPro.git "vendor\ThermoSysPro"
           if errorlevel 1 exit /b 1
-          if not exist "vendor\ThermoSysPro\ThermoSysPro\package.mo" (
-            echo ERROR: ThermoSysPro package.mo missing after clone.
-            exit /b 1
-          )
-          findstr /C:"version = \"4.2\"" "vendor\ThermoSysPro\ThermoSysPro\package.mo" >nul
-          if errorlevel 1 (
-            echo WARNING: fetched ThermoSysPro does not report version 4.2; continuing for compatibility check.
-          ) else (
-            echo ThermoSysPro 4.2 source prepared successfully.
-          )
           exit /b 0
 
-      - name: Map ASCII workspace for OpenModelica
+      - name: Map ASCII workspace for experimental MATLAB path
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode != 'legacy-exact' }}
         shell: cmd
         run: |
           subst T: /d >nul 2>nul
           subst T: "%GITHUB_WORKSPACE%"
           if errorlevel 1 exit /b 1
-          if not exist "T:\matlab\cosim_entrypoint.m" (
-            echo ERROR: T: workspace mapping failed.
-            exit /b 1
-          )
-          echo ASCII workspace mapped to T:\
           exit /b 0
 
       - name: Run on installed MATLAB
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode != 'legacy-exact' }}
         shell: cmd
         env:
-          TRIPLENS_COSIM_MODE: ${{ inputs.mode || 'bfp-cosim' }}
-          TRIPLENS_BFP_TRIP_TIME: ${{ inputs.bfp_trip_time_s || '300' }}
-          TRIPLENS_BFP_RAMP_DURATION: ${{ inputs.bfp_ramp_duration_s || '2' }}
-          TRIPLENS_STOP_TIME: ${{ inputs.stop_time_s || '1000' }}
-          TRIPLENS_INTERVALS: ${{ inputs.intervals || '1000' }}
+          TRIPLENS_COSIM_MODE: ${{ inputs.mode }}
+          TRIPLENS_BFP_TRIP_TIME: ${{ inputs.bfp_trip_time_s }}
+          TRIPLENS_BFP_RAMP_DURATION: ${{ inputs.bfp_ramp_duration_s }}
+          TRIPLENS_STOP_TIME: ${{ inputs.stop_time_s }}
+          TRIPLENS_INTERVALS: ${{ inputs.intervals }}
           TRIPLENS_COSIM_REPO_ROOT: T:\
           TRIPLENS_THERMOSYSPRO_ROOT: T:\vendor\ThermoSysPro
         run: |
           "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File ".\scripts\run_installed_matlab.ps1" -Mode "%TRIPLENS_COSIM_MODE%"
 
-      - name: Upload co-sim outputs
-        if: always()
+      - name: Upload experimental co-sim outputs
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.mode != 'legacy-exact' }}
         uses: actions/upload-artifact@v4
         with:
           name: triplens-matlab-cosim-${{ github.run_number }}
@@ -121,7 +120,7 @@ jobs:
           retention-days: 30
 
       - name: Remove ASCII workspace mapping
-        if: always()
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.mode != 'legacy-exact' }}
         shell: cmd
         run: |
           subst T: /d >nul 2>nul
