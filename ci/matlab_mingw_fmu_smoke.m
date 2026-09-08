@@ -54,6 +54,15 @@ if ~hasWinBefore
         fmudialog.compileFMUSources(fmu, ...
             'FMUMode','Co-Simulation', ...
             'CustomBuild','triplens_fmu_custom_build');
+
+        % compileFMUSources writes the rebuilt FMU in the current working
+        % directory using the input base name. Normalize it back to the
+        % workflow's stable outputs path before verification/upload.
+        generated = fullfile(repo,'TripLens_CombinedCycle_TripTAC_CoSim_win64.fmu');
+        if isfile(generated) && ~strcmpi(generated,fmu)
+            copyfile(generated,fmu,'f');
+            disp("CAPTURED_GENERATED_FMU=" + string(generated));
+        end
     catch ME
         disp('FMU_COMPILE_FAILED');
         disp(getReport(ME,'extended','hyperlinks','off'));
@@ -66,7 +75,11 @@ if isfolder(postDir), rmdir(postDir,'s'); end
 mkdir(postDir);
 unzip(fmu,postDir);
 winFiles = dir(fullfile(postDir,'binaries','win64','*'));
+winFiles = winFiles(~[winFiles.isdir]);
 assert(~isempty(winFiles),'TripLens:NoWin64','Windows-ready FMU has no binaries/win64 payload.');
+for k = 1:numel(winFiles)
+    disp("WIN64_FILE_" + string(k) + "=" + string(winFiles(k).name));
+end
 disp("WIN64_FMU_PASS_FILES=" + string(numel(winFiles)));
 rmdir(postDir,'s');
 
