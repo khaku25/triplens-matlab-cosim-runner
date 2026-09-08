@@ -41,7 +41,77 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  legacy-exact:
+    if: ${{ github.event_name == 'push' || inputs.mode == 'legacy-exact' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out co-sim repository
+        uses: actions/checkout@v4
+
+      - name: Clone exact legacy Action source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf legacy_action
+          git clone https://github.com/khaku25/triplens-thermosyspro-cloud-runner.git legacy_action
+          git -C legacy_action checkout --detach 6fd1824880f97c957ba5a04013f3d789fb1dbd5d
+          test "$(git -C legacy_action rev-parse HEAD)" = "6fd1824880f97c957ba5a04013f3d789fb1dbd5d"
+          grep -q 'db81ae1b5a6a85f6c6c7693244cafa6087e18ff5' legacy_action/scripts/run_pipeline.sh
+          grep -q 'openmodelica/openmodelica:v1.27.0-minimal' legacy_action/scripts/run_pipeline.sh
+          echo "Legacy Action source pinned exactly."
+
+      - name: Run legacy unit tests
+        working-directory: legacy_action
+        shell: bash
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Run exact legacy Action pipeline
+        working-directory: legacy_action
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x scripts/run_pipeline.sh
+          scripts/run_pipeline.sh \
+            "600" \
+            "5" \
+            "1000" \
+            "1000" \
+            "none" \
+            "none" \
+            "causal_100ms" \
+            "2000" \
+            "5000" \
+            "60" \
+            "400"
+
+      - name: Verify exact legacy result
+        working-directory: legacy_action
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s outputs/thermosyspro-raw.csv
+          test -s outputs/processbus.csv
+          test -s outputs/GT_TRIP_RAW_DATA.csv
+          test -s outputs/DCS1.csv
+          test -s outputs/DCS2.csv
+          test -s outputs/ECMS.csv
+          echo "EXACT LEGACY ACTION PASS"
+
+      - name: Upload exact legacy outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: triplens-legacy-exact-${{ github.run_number }}
+          path: |
+            legacy_action/outputs/
+            legacy_action/build/run.mos
+            legacy_action/build/TripLens_CombinedCycle_TripTAC.mo
+          if-no-files-found: error
+          retention-days: 30
+
   matlab-cosim:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode != 'legacy-exact' }}
     runs-on: [self-hosted, Windows, X64]
     timeout-minutes: 180
 
@@ -58,24 +128,7 @@ jobs:
           if exist "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" (echo Windows PowerShell: found) else (echo Windows PowerShell: MISSING & exit /b 1)
           exit /b 0
 
-      - name: Run exact legacy Action baseline
-        if: ${{ github.event_name == 'push' || inputs.mode == 'legacy-exact' }}
-        shell: cmd
-        run: |
-          "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File ".\scripts\run_legacy_exact.ps1" -TripTime 600 -TripRampDuration 5 -StopTime 1000 -Intervals 1000
-
-      - name: Upload exact legacy outputs
-        if: ${{ always() && (github.event_name == 'push' || inputs.mode == 'legacy-exact') }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: triplens-legacy-exact-${{ github.run_number }}
-          path: |
-            outputs/legacy_exact/
-          if-no-files-found: warn
-          retention-days: 30
-
       - name: Prepare ThermoSysPro source for experimental MATLAB path
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode != 'legacy-exact' }}
         shell: cmd
         run: |
           if exist "vendor\ThermoSysPro\ThermoSysPro\package.mo" exit /b 0
@@ -86,7 +139,6 @@ jobs:
           exit /b 0
 
       - name: Map ASCII workspace for experimental MATLAB path
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode != 'legacy-exact' }}
         shell: cmd
         run: |
           subst T: /d >nul 2>nul
@@ -95,7 +147,6 @@ jobs:
           exit /b 0
 
       - name: Run on installed MATLAB
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode != 'legacy-exact' }}
         shell: cmd
         env:
           TRIPLENS_COSIM_MODE: ${{ inputs.mode }}
@@ -109,7 +160,7 @@ jobs:
           "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File ".\scripts\run_installed_matlab.ps1" -Mode "%TRIPLENS_COSIM_MODE%"
 
       - name: Upload experimental co-sim outputs
-        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.mode != 'legacy-exact' }}
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: triplens-matlab-cosim-${{ github.run_number }}
@@ -120,7 +171,7 @@ jobs:
           retention-days: 30
 
       - name: Remove ASCII workspace mapping
-        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.mode != 'legacy-exact' }}
+        if: always()
         shell: cmd
         run: |
           subst T: /d >nul 2>nul
