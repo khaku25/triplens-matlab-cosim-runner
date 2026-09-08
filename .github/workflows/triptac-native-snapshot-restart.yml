@@ -1,0 +1,97 @@
+name: TripTAC Saved State Native Restart
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/triptac-native-snapshot-restart.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: triptac-saved-state-native-restart
+  cancel-in-progress: false
+jobs:
+  native-restart:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve the verified full state capture, not a display-only CSV
+        uses: actions/download-artifact@v4
+        with:
+          name: triptac-native-full-state-1
+          run-id: 34220970632
+          github-token: ${{ github.token }}
+          path: legacy_exact/warm_snapshot
+      - name: Prepare the exact physical reference
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p legacy_exact/vendor legacy_exact/build/saved_state_restart/omhome
+          git clone --no-checkout https://github.com/Dwarf-Planet-Project/ThermoSysPro.git legacy_exact/vendor/ThermoSysPro
+          git -C legacy_exact/vendor/ThermoSysPro checkout --detach db81ae1b5a6a85f6c6c7693244cafa6087e18ff5
+          python3 legacy_exact/scripts/render_modelica.py --trip-time 600 --trip-ramp-duration 5 --stop-time 1000 --intervals 10000
+          cmp legacy_exact/build/TripLens_CombinedCycle_TripTAC.mo legacy_exact/warm_snapshot/reference.mo
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json
+          d=Path('legacy_exact/warm_snapshot'); s=json.loads((d/'capture_summary.json').read_text())
+          assert s['run_id']=='34220970632'
+          assert hashlib.sha256((d/'native_full_res.mat').read_bytes()).hexdigest()==s['sha256']['native_full_res.mat']
+          PY
+      - name: Build unchanged model then restart at the saved simulation time
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD/legacy_exact/build/saved_state_restart/omhome:/root" -v "$PWD/legacy_exact:/workspace" -w /workspace openmodelica/openmodelica:v1.27.0-minimal omc /workspace/modelica/install_dependencies.mos
+          cat > legacy_exact/build/saved_state_restart/restart.mos <<'MOS'
+          setCommandLineOptions("--std=3.4");
+          loadModel(Modelica,{"3.2.3"}); getErrorString();
+          loadFile("/workspace/vendor/ThermoSysPro/ThermoSysPro/package.mo"); getErrorString();
+          loadFile("/workspace/build/TripLens_CombinedCycle_TripTAC.mo"); getErrorString();
+          cd("/workspace/build/saved_state_restart");
+          buildModel(TripLens_CombinedCycle_TripTAC,startTime=300,stopTime=301,numberOfIntervals=10,tolerance=1e-3,method="dassl",outputFormat="csv",fileNamePrefix="native_restart",variableFilter="^(time|Alternateur\\.Welec|Ballon(HP|MP|BP)\\.(P|zl)|Debit\\.y\\.signal|Temperature\\.y\\.signal)$");
+          getErrorString();
+          MOS
+          docker run --rm -v "$PWD/legacy_exact/build/saved_state_restart/omhome:/root" -v "$PWD/legacy_exact:/workspace" -w /workspace openmodelica/openmodelica:v1.27.0-minimal omc /workspace/build/saved_state_restart/restart.mos > legacy_exact/build/saved_state_restart/build.log 2>&1
+          test -x legacy_exact/build/saved_state_restart/native_restart
+          docker run --rm -v "$PWD/legacy_exact:/workspace" -w /workspace/build/saved_state_restart openmodelica/openmodelica:v1.27.0-minimal ./native_restart -iif=/workspace/warm_snapshot/native_full_res.mat -iit=300 -iim=none -noEventEmit -lv=LOG_INIT,LOG_STATS > legacy_exact/build/saved_state_restart/restart.log 2>&1
+          tail -40 legacy_exact/build/saved_state_restart/restart.log
+          sudo chown -R "$(id -u):$(id -g)" legacy_exact/build/saved_state_restart
+      - name: Require real continuation and agreement with the saved start state
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import csv,json,math,hashlib,os
+          d=Path('legacy_exact/build/saved_state_restart')
+          with (d/'native_restart_res.csv').open(newline='') as f: rows=list(csv.DictReader(f))
+          assert len(rows)>=11 and abs(float(rows[0]['time'])-300)<1e-7 and abs(float(rows[-1]['time'])-301)<1e-7
+          ref=json.loads(Path('legacy_exact/warm_snapshot/native_snapshot_300.json').read_text())['values']
+          names=['Alternateur.Welec','BallonHP.P','BallonMP.P','BallonBP.P','BallonHP.zl','BallonMP.zl','BallonBP.zl']
+          comparison={}
+          for n in names:
+              values=[float(r[n]) for r in rows]
+              assert all(math.isfinite(v) for v in values)
+              err=abs(values[0]-ref[n])/max(1,abs(ref[n]))
+              assert err<1e-6,(n,err)
+              comparison[n]={'saved':ref[n],'restarted_first':values[0],'last':values[-1],'relative_start_error':err}
+          summary={'status':'pass','scope':'native saved-state continuation only, NOT Simulink/FMU validation','source_snapshot_run_id':34220970632,'run_id':os.environ['GITHUB_RUN_ID'],'method':'iif MAT, iit=300, iim=none; physical equations and property assertions intact','start_time_s':300,'stop_time_s':301,'samples':len(rows),'comparison':comparison,'csv_sha256':hashlib.sha256((d/'native_restart_res.csv').read_bytes()).hexdigest()}
+          (d/'restart_summary.json').write_text(json.dumps(summary,indent=2));print(json.dumps(summary,indent=2));print('NATIVE_SAVED_STATE_RESTART_PASS_NOT_FMU_PASS')
+          PY
+      - name: Make diagnostics readable
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" legacy_exact/build/saved_state_restart
+      - name: Preserve restart evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: triptac-native-saved-restart-${{ github.run_number }}
+          path: |
+            legacy_exact/build/saved_state_restart/*.csv
+            legacy_exact/build/saved_state_restart/*.log
+            legacy_exact/build/saved_state_restart/*.mos
+            legacy_exact/build/saved_state_restart/restart_summary.json
+          if-no-files-found: error
+          retention-days: 30
