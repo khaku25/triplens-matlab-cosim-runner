@@ -41,14 +41,19 @@ hasSources = isfolder(fullfile(preDir,'sources')) && ...
     ~isempty(dir(fullfile(preDir,'sources','*.c')));
 hasWinBefore = isfolder(fullfile(preDir,'binaries','win64')) && ...
     ~isempty(dir(fullfile(preDir,'binaries','win64','*')));
+headerPresent = isfile(fullfile(preDir,'sources','omc_simulation_settings.h'));
 disp("FMU_HAS_C_SOURCES=" + string(hasSources));
 disp("FMU_HAS_WIN64_BEFORE=" + string(hasWinBefore));
+disp("FMU_HAS_OMC_SETTINGS_HEADER=" + string(headerPresent));
 assert(hasSources || hasWinBefore,'TripLens:NoSources','FMU contains neither win64 binary nor C sources.');
+assert(headerPresent || hasWinBefore,'TripLens:OMCHeaderMissing','OpenModelica runtime header is missing from source FMU.');
 rmdir(preDir,'s');
 
 if ~hasWinBefore
     try
-        fmudialog.compileFMUSources(fmu,'FMUMode','Co-Simulation');
+        fmudialog.compileFMUSources(fmu, ...
+            'FMUMode','Co-Simulation', ...
+            'CustomBuild','triplens_fmu_custom_build');
     catch ME
         disp('FMU_COMPILE_FAILED');
         disp(getReport(ME,'extended','hyperlinks','off'));
