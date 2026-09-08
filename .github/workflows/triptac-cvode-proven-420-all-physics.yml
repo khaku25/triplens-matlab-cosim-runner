@@ -1,0 +1,57 @@
+name: TripTAC Proven CVODE 420s All Physics
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/triptac-cvode-proven-420-all-physics.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  proven-420s-all-physics:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      TRIPLENS_USE_NATIVE_SEED: '1'
+      TRIPLENS_RETAIN_VALIDATED_NLS_GUESS: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Download exact Run4 CVODE FMU that already completed Linux and Windows Simulink execution
+        uses: actions/download-artifact@v4
+        with:
+          name: cvode-build-linux64-4
+          run-id: 34233967732
+          github-token: ${{ github.token }}
+          path: proven
+      - run: python3 -m pip install 'fmpy==0.3.22' 'h5py==3.12.1'
+      - name: Actual 420 second all-dynamic baseline at 0.1 second communication interval
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p results
+          python3 ci/cvode/probe_all_dynamic_long.py \
+            --fmu proven/TripLens_CombinedCycle_TripTAC_CoSim_linux64.fmu \
+            --out results --stop 420 --step 0.1 --label proven_baseline_420s \
+            2> >(grep --line-buffered -E 'TRIPLENS_FMI_INTERNAL_SOLVER|TRIPLENS_CVODE_FMI_CALLBACK_CLEANUP_PASS|ERROR|Error|error|assert|CVODE' | tee results/runtime_key.log >&2)
+          python3 - <<'PY'
+          import json
+          r=json.load(open('results/long_all_dynamic_report.json'))
+          assert r['status']=='pass'
+          assert r['last_completed_time_s']>=420
+          assert r['samples']==4201
+          assert r['all_dynamic_variable_count']==12897
+          assert r['unit_bearing_physical_real_count']==8620
+          assert r['all_unit_bearing_real_finite'] is True
+          print('PROVEN_CVODE_ALL_PHYSICS_420S_PASS')
+          print(json.dumps(r,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: proven-all-physics-420s
+          path: results/
+          if-no-files-found: warn
+          retention-days: 30
