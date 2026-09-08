@@ -1,0 +1,40 @@
+{
+  "source_repo": "khaku25/triplens-thermosyspro-cloud-runner",
+  "source_commit": "6fd1824880f97c957ba5a04013f3d789fb1dbd5d",
+  "source_blobs": {
+    "ecms_tag_catalog": "0580874d1caa2da5f813b813b11180010ebd16aa",
+    "ecms_command_catalog": "8e61366b23849bc2b16ff5b4622cc9170e4f081a",
+    "ecms_m_links": "5700b9ac3f516ff7331c34ddf06c8eb44a393239",
+    "ecms_a_equipment": "08ca34d43afdbbce1ce2106d0c8f85c43a79c2ae"
+  },
+  "electrical_equipment": {
+    "CB-52GT": {"commands": ["OPEN","CLOSE","TRIP","RESET"], "model_inputs": ["CB_52GT_CMD","CB_52GT_TRIP","CB_52GT_RESET"], "feedback_tag": "52GT.CLOSED"},
+    "CB-52ST": {"commands": ["OPEN","CLOSE","TRIP","RESET"], "model_inputs": ["CB_52ST_CMD","CB_52ST_TRIP","CB_52ST_RESET"], "feedback_tag": "52ST.CLOSED"},
+    "GRID-154KV": {"commands": ["LOSS","RESTORE"], "model_inputs": ["GRID_AVAILABLE"], "feedback_tag": "GRID-154KV.AVAILABLE"},
+    "TR-GT": {"commands": ["OUT_OF_SERVICE","IN_SERVICE"], "model_inputs": ["TR_GT_AVAILABLE"], "feedback_tag": "TR-GT.AVAILABLE"},
+    "TR-ST": {"commands": ["OUT_OF_SERVICE","IN_SERVICE"], "model_inputs": ["TR_ST_AVAILABLE"], "feedback_tag": "TR-ST.AVAILABLE"},
+    "UAT-A": {"commands": ["OUT_OF_SERVICE","IN_SERVICE"], "model_inputs": ["UAT_A_AVAILABLE"], "feedback_tag": "UAT-A.AVAILABLE"},
+    "UAT-B": {"commands": ["OUT_OF_SERVICE","IN_SERVICE"], "model_inputs": ["UAT_B_AVAILABLE"], "feedback_tag": "UAT-B.AVAILABLE"},
+    "CB-IN-A": {"commands": ["OPEN","CLOSE","TRIP","RESET"], "model_inputs": ["CB_IN_A_CMD","CB_IN_A_TRIP","CB_IN_A_RESET"], "feedback_tag": "CB-IN-A.CLOSED"},
+    "CB-IN-B": {"commands": ["OPEN","CLOSE","TRIP","RESET"], "model_inputs": ["CB_IN_B_CMD","CB_IN_B_TRIP","CB_IN_B_RESET"], "feedback_tag": "CB-IN-B.CLOSED"},
+    "CB-TIE-AB": {"commands": ["OPEN","CLOSE","TRIP","RESET"], "model_inputs": ["CB_TIE_AB_CMD","CB_TIE_AB_TRIP","CB_TIE_AB_RESET"], "feedback_tag": "CB-TIE-AB.CLOSED"}
+  },
+  "ecms_state_tags": {
+    "ECMS.52GT.CLOSED": "52GT",
+    "ECMS.52ST.CLOSED": "52ST",
+    "ECMS.IN-A.CLOSED": "IN-A",
+    "ECMS.IN-B.CLOSED": "IN-B",
+    "ECMS.TIE-AB.CLOSED": "TIE-AB",
+    "ECMS.BUS-A.VOLTAGE": "BUS-A",
+    "ECMS.BUS-B.VOLTAGE": "BUS-B"
+  },
+  "process_links": {
+    "FWP-HP": {"bus":"BUS-A", "feeder":"VCB-A01", "voltage_kv":6.9, "trip_input":"FWP_HP_TRIP", "feedback_tag":"TSP.DRUM.HP.FW_FLOW", "m_link":"TSP.DRUM.HP.FW_FLOW", "ecms_tag":"ECMS.FWP-HP.PHYS"},
+    "FWP-IP": {"bus":"BUS-B", "feeder":"VCB-B01", "voltage_kv":6.9, "trip_input":"FWP_IP_TRIP", "feedback_tag":"TSP.DRUM.IP.FW_FLOW", "m_link":"TSP.DRUM.IP.FW_FLOW", "ecms_tag":"ECMS.FWP-IP.PHYS"},
+    "FWP-LP": {"bus":"BUS-A", "feeder":"VCB-A02", "voltage_kv":6.9, "trip_input":"FWP_LP_TRIP", "feedback_tag":"TSP.DRUM.LP.FW_FLOW", "m_link":"TSP.DRUM.LP.FW_FLOW", "ecms_tag":"ECMS.FWP-LP.PHYS"}
+  },
+  "known_gap": {
+    "protection_relay_physics": false,
+    "reason": "Current ECMS catalogs contain breaker/grid/transformer commands and process links, but relay pickup/trip is not yet driven by a solved electrical V/I state model."
+  }
+}
