@@ -55,3 +55,5 @@ jobs:
           path: results/
           if-no-files-found: warn
           retention-days: 30
+
+# Triggered 2026-09-08 for requested full-physics 420 s stability verification.
