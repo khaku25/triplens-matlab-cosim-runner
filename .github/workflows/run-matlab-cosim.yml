@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'legacy_exact/**'
+      - '!legacy_exact/scripts/build_trip_tac_cosim.py'
       - 'matlab/**'
       - 'modelica/**'
       - 'scripts/**'
