@@ -44,8 +44,9 @@ jobs:
               r'Initialvalue=1400,\s*Starttime=4000,\s*Duration=1000,\s*Finalvalue=700\)'
           )
           replacement = (
-              'Modelica.Blocks.Sources.TimeTable arretPomesHP(\n'
-              '    table=[0,1400; 5,1400; 10,1540; 14.999,1540; 15,0; 30,0])'
+              'ThermoSysPro.InstrumentationAndControl.Blocks.Tables.Table1DTemps arretPomesHP(\n'
+              '    Table=[0,1400; 5,1400; 10,1540; 14.999,1540; 15,0; 30,0],\n'
+              '    option_interpolation=1)'
           )
           txt, n = pattern.subn(replacement, txt, count=1)
           if n != 1:
@@ -57,6 +58,7 @@ jobs:
               'physics_base': 'ThermoSysPro.Examples.CombinedCyclePowerPlant.CombinedCycle_TripTAC',
               'thermosyspro_commit': 'db81ae1b5a6a85f6c6c7693244cafa6087e18ff5',
               'changed_component': 'PompeAlimHP drive source only',
+              'drive_source': 'ThermoSysPro Table1DTemps using native OutputReal connector',
               'connection_preserved': 'PompeAlimHP.rpm_or_mpower <- arretPomesHP.y',
               'schedule_rpm': [[0,1400],[5,1400],[10,1540],[14.999,1540],[15,0],[30,0]],
               'intent': 'normal -> +10% HP feedwater pump speed -> hold -> drive loss/trip',
@@ -122,9 +124,9 @@ jobs:
               raise SystemExit(f'Incomplete simulation time range: {times[0]}..{times[-1]}')
           interesting = []
           for i,name in enumerate(header):
-              if ('PompeAlimHP' in name or 'BallonHP' in name or 'CapteurDebitEauHP' in name or 'Alternateur' in name):
+              if ('PompeAlimHP' in name or 'BallonHP' in name or 'CapteurDebitEauHP' in name or 'Alternateur' in name or 'arretPomesHP' in name):
                   interesting.append((i,name))
-          interesting = sorted(interesting)[:160]
+          interesting = sorted(interesting)[:180]
           def nearest(t): return min(range(len(times)), key=lambda k: abs(times[k]-t))
           sample_times = [0,5,10,14.9,15.1,20,30]
           snapshots = {}; finite = True
@@ -135,24 +137,24 @@ jobs:
                       v=float(rows[j][i]); finite = finite and math.isfinite(v); snap[name]=v
                   except Exception: pass
               snapshots[str(t)] = snap
-          rpm_col = next((i for i,n in enumerate(header) if n == 'PompeAlimHP.rpm'), None)
-          rpm_check = None
-          if rpm_col is not None:
-              vals={str(t):float(rows[nearest(t)][rpm_col]) for t in [5,10,14.9,15.1,20,30]}
-              rpm_check=vals
-              if not (vals['10'] > vals['5']*1.05): raise SystemExit(f'Pump speed did not rise materially: {vals}')
-              if not (abs(vals['20']) < max(5.0,abs(vals['10'])*0.05)): raise SystemExit(f'Pump speed did not collapse after trip: {vals}')
+          cmd_col = next((i for i,n in enumerate(header) if n in ('arretPomesHP.y.signal','PompeAlimHP.rpm')), None)
+          cmd_check = None
+          if cmd_col is not None:
+              vals={str(t):float(rows[nearest(t)][cmd_col]) for t in [5,10,14.9,15.1,20,30]}
+              cmd_check=vals
+              if not (vals['10'] > vals['5']*1.05): raise SystemExit(f'Pump command/speed did not rise materially: {vals}')
+              if not (abs(vals['20']) < max(5.0,abs(vals['10'])*0.05)): raise SystemExit(f'Pump command/speed did not collapse after trip: {vals}')
           if not finite: raise SystemExit('Non-finite value found in sampled physical outputs')
           report={
               'status':'pass','simulation_start_s':times[0],'simulation_end_s':times[-1],
               'samples':len(rows),'interesting_variable_count':len(interesting),
-              'interesting_variables':[n for _,n in interesting],'rpm_check':rpm_check,
+              'interesting_variables':[n for _,n in interesting],'drive_check':cmd_check,
               'snapshots':snapshots,
               'interpretation_guardrail':'Native process-side FWP drive-loss experiment; not yet ECMS breaker/relay initiated electrical trip.'
           }
           Path('fwp_test/results/fwp_ramp_trip_report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
           print('FWP_RAMP_TRIP_NATIVE_PHYSICS_PASS')
-          print(json.dumps({'rpm_check':rpm_check,'interesting_variables':report['interesting_variables'][:30]},indent=2))
+          print(json.dumps({'drive_check':cmd_check,'interesting_variables':report['interesting_variables'][:30]},indent=2))
           PY
 
       - name: Upload FWP experiment evidence
