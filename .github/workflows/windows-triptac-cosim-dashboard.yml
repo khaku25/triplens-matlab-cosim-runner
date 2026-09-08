@@ -30,12 +30,11 @@ jobs:
           github-token: ${{ github.token }}
 
       - name: Show downloaded FMU payload
-        shell: powershell
+        shell: cmd
         run: |
-          Get-ChildItem -Recurse fmu_artifact | Select-Object FullName,Length
-          $fmu = Get-ChildItem -Recurse fmu_artifact -Filter TripLens_CombinedCycle_TripTAC_CoSim.fmu | Select-Object -First 1
-          if (-not $fmu) { throw 'Validated TripTAC FMU artifact missing' }
-          Write-Host "FMU=$($fmu.FullName)"
+          dir /s /b fmu_artifact
+          if not exist "fmu_artifact\TripLens_CombinedCycle_TripTAC_CoSim.fmu" exit /b 1
+          echo FMU=%CD%\fmu_artifact\TripLens_CombinedCycle_TripTAC_CoSim.fmu
 
       - name: Build ECMS dashboard and run real Simulink-FMU smoke
         shell: cmd
