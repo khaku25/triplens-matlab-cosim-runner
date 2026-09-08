@@ -1,0 +1,138 @@
+name: TripTAC Source FMU to Simulink
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/triptac-source-fmu-simulink.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-source-fmu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare exact pinned ThermoSysPro
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf legacy_exact/vendor/ThermoSysPro legacy_exact/build/source_fmu
+          mkdir -p legacy_exact/vendor legacy_exact/build/source_fmu/omhome legacy_exact/outputs
+          git clone --no-checkout https://github.com/Dwarf-Planet-Project/ThermoSysPro.git legacy_exact/vendor/ThermoSysPro
+          git -C legacy_exact/vendor/ThermoSysPro checkout --detach db81ae1b5a6a85f6c6c7693244cafa6087e18ff5
+          test "$(git -C legacy_exact/vendor/ThermoSysPro rev-parse HEAD)" = "db81ae1b5a6a85f6c6c7693244cafa6087e18ff5"
+
+      - name: Generate external-input original TripTAC
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 legacy_exact/scripts/build_trip_tac_cosim.py
+          test -s legacy_exact/build/TripLens_CombinedCycle_TripTAC_CoSim.mo
+
+      - name: Install Modelica 3.2.3
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$PWD/legacy_exact/build/source_fmu/omhome:/root" \
+            -v "$PWD/legacy_exact:/workspace" \
+            -w /workspace \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            omc /workspace/modelica/install_dependencies.mos
+
+      - name: Export FMI 2.0 Co-Simulation source FMU
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > legacy_exact/build/source_fmu/export_source_fmu.mos <<'MOS'
+          setCommandLineOptions("--std=3.4");
+          loadModel(Modelica, {"3.2.3"});
+          getErrorString();
+          loadFile("/workspace/vendor/ThermoSysPro/ThermoSysPro/package.mo");
+          getErrorString();
+          loadFile("/workspace/build/TripLens_CombinedCycle_TripTAC_CoSim.mo");
+          getErrorString();
+          cd("/workspace/build/source_fmu");
+          checkModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_CombinedCycle_TripTAC_CoSim);
+          getErrorString();
+          buildModelFMU(
+            ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_CombinedCycle_TripTAC_CoSim,
+            version="2.0",
+            fmuType="cs",
+            fileNamePrefix="TripLens_CombinedCycle_TripTAC_CoSim",
+            platforms={});
+          getErrorString();
+          MOS
+          docker run --rm \
+            -v "$PWD/legacy_exact/build/source_fmu/omhome:/root" \
+            -v "$PWD/legacy_exact:/workspace" \
+            -w /workspace \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            omc /workspace/build/source_fmu/export_source_fmu.mos | tee legacy_exact/build/source_fmu/export_source_fmu.log
+          test -s legacy_exact/build/source_fmu/TripLens_CombinedCycle_TripTAC_CoSim.fmu
+
+      - name: Verify source FMU contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import zipfile
+          p='legacy_exact/build/source_fmu/TripLens_CombinedCycle_TripTAC_CoSim.fmu'
+          with zipfile.ZipFile(p) as z:
+              names=z.namelist()
+              xml=z.read('modelDescription.xml').decode('utf-8')
+          required=['gtExhaustFlowCmd','gtExhaustTemperatureCmd','stElectricalPower',
+                    'hpDrumLevel','ipDrumLevel','lpDrumLevel',
+                    'hpDrumPressure','ipDrumPressure','lpDrumPressure']
+          missing=[x for x in required if x not in xml]
+          assert not missing, f'missing variables: {missing}'
+          assert 'CoSimulation' in xml, 'FMU is not Co-Simulation'
+          assert any(n.startswith('sources/') and n.endswith('.c') for n in names), 'FMU C sources missing'
+          print('TRIPTAC SOURCE FMU CONTRACT PASS')
+          print('source files:', sum(n.startswith('sources/') for n in names))
+          PY
+
+      - name: Upload source FMU
+        uses: actions/upload-artifact@v4
+        with:
+          name: triptac-source-fmu-${{ github.run_number }}
+          path: |
+            legacy_exact/build/source_fmu/TripLens_CombinedCycle_TripTAC_CoSim.fmu
+            legacy_exact/build/source_fmu/export_source_fmu.log
+            legacy_exact/build/TripLens_CombinedCycle_TripTAC_CoSim.mo
+          if-no-files-found: error
+          retention-days: 30
+
+  simulink-fmu-smoke:
+    needs: build-source-fmu
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download source FMU
+        uses: actions/download-artifact@v4
+        with:
+          name: triptac-source-fmu-${{ github.run_number }}
+          path: fmu_artifact
+
+      - name: Compile FMU sources for Windows and run Simulink smoke
+        shell: cmd
+        run: |
+          "C:\Program Files\MATLAB\R2025b\bin\matlab.exe" -batch "fmu=fullfile(getenv('GITHUB_WORKSPACE'),'fmu_artifact','TripLens_CombinedCycle_TripTAC_CoSim.fmu'); assert(isfile(fmu)); cd(getenv('GITHUB_WORKSPACE')); fmudialog.compileFMUSources(fmu,'FMUMode','Co-Simulation'); compiled=fullfile(getenv('GITHUB_WORKSPACE'),'TripLens_CombinedCycle_TripTAC_CoSim.fmu'); assert(isfile(compiled)); mdl='TripLens_TripTAC_FMU_Smoke'; if bdIsLoaded(mdl),bdclose(mdl);end; new_system(mdl); add_block('simulink/Sources/Constant',[mdl '/GT_Flow'],'Value','606.94','Position',[30 60 90 90]); add_block('simulink/Sources/Constant',[mdl '/GT_Temperature'],'Value','893.75','Position',[30 130 90 160]); add_block('simulink_extras/FMU Import/FMU',[mdl '/Thermo_FMU'],'FMUName',compiled,'Position',[180 45 480 260]); set_param([mdl '/Thermo_FMU'],'FMUInputMapping','Flat','FMUOutputMapping','Flat'); ph=get_param([mdl '/Thermo_FMU'],'PortHandles'); assert(numel(ph.Inport)==2,['expected 2 inputs, got ' num2str(numel(ph.Inport))]); assert(numel(ph.Outport)>=7,['expected >=7 outputs, got ' num2str(numel(ph.Outport))]); add_line(mdl,'GT_Flow/1','Thermo_FMU/1','autorouting','on'); add_line(mdl,'GT_Temperature/1','Thermo_FMU/2','autorouting','on'); set_param(mdl,'SolverType','Fixed-step','FixedStep','0.1','StopTime','0.2'); mkdir(fullfile(getenv('GITHUB_WORKSPACE'),'outputs')); save_system(mdl,fullfile(getenv('GITHUB_WORKSPACE'),'outputs',[mdl '.slx'])); sim(mdl); fid=fopen(fullfile(getenv('GITHUB_WORKSPACE'),'outputs','triptac_fmu_smoke.txt'),'w'); fprintf(fid,'SIMULINK FMU SMOKE PASS\ninputs=%d\noutputs=%d\n',numel(ph.Inport),numel(ph.Outport)); fclose(fid); bdclose(mdl); disp('SIMULINK FMU SMOKE PASS');"
+
+      - name: Upload Windows Simulink smoke outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: triptac-simulink-smoke-${{ github.run_number }}
+          path: |
+            outputs/
+            TripLens_CombinedCycle_TripTAC_CoSim.fmu
+          if-no-files-found: warn
+          retention-days: 30
