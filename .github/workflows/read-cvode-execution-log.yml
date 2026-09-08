@@ -18,11 +18,20 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           mkdir -p evidence
-          gh api "repos/$GH_REPO/actions/jobs/102079390010/logs" > evidence/desktop-cvode-job-102079390010.log
-          tail -100 evidence/desktop-cvode-job-102079390010.log > evidence/tail.txt
-          grep -n -E 'Error|error|ERROR|Crash|crash|SELECTOR|CVODE|Exit Status' evidence/desktop-cvode-job-102079390010.log | tail -60 > evidence/key-lines.txt || true
-          cat evidence/key-lines.txt
+          gh api --allow-escape-sequences "repos/$GH_REPO/actions/jobs/102079390010/logs" > evidence/desktop-cvode-job-102079390010.log
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p=Path('evidence/desktop-cvode-job-102079390010.log')
+          text=re.sub(r'\x1b\[[0-9;]*[a-zA-Z]','',p.read_text(errors='replace')).replace('\x08','')
+          lines=text.splitlines()
+          Path('evidence/tail.txt').write_text('\n'.join(lines[-100:]))
+          keys=[s for s in lines if re.search('Error|error|ERROR|Crash|crash|SELECTOR|CVODE|Exit Status',s)]
+          Path('evidence/key-lines.txt').write_text('\n'.join(keys[-60:]))
+          print('\n'.join(keys[-40:]))
+          PY
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: cvode-desktop-log-evidence
           path: evidence/
