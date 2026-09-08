@@ -19,12 +19,12 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Generate and validate A-program ECMS Simulink core
+      - name: Generate validate and install A-program ECMS Simulink core
         shell: cmd
         run: |
-          "C:\Program Files\MATLAB\R2025b\bin\matlab.exe" -batch "addpath(fullfile(getenv('GITHUB_WORKSPACE'),'ecms_logic')); build_a_logic_core"
+          "C:\Program Files\MATLAB\R2025b\bin\matlab.exe" -batch "addpath(fullfile(getenv('GITHUB_WORKSPACE'),'ecms_logic')); build_a_logic_core; install_a_logic_into_ecms"
 
-      - name: Upload generated ECMS logic core
+      - name: Upload generated ECMS logic core and install report
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -32,5 +32,7 @@ jobs:
           path: |
             outputs/TripLens_ECMS_A_Logic_Core.slx
             outputs/ecms_a_logic_core_report.json
+            outputs/ecms_a_logic_install_report.json
           if-no-files-found: warn
           retention-days: 30
+
