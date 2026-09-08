@@ -1,0 +1,155 @@
+name: TripTAC CVODE 420s All Physics Baseline
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ci/cvode/probe_all_dynamic_long.py'
+      - '.github/workflows/triptac-cvode-long-all-physics.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: triptac-cvode-long-all-physics
+  cancel-in-progress: true
+
+jobs:
+  build-optimized-linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Download exact native-seeded source that already initialized successfully
+        uses: actions/download-artifact@v4
+        with:
+          name: native-seeded-source-1
+          run-id: 34226155354
+          github-token: ${{ github.token }}
+          path: seed_source
+      - name: Build equation-identical CVODE FMU with release optimization
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p long_build
+          printf '%s\n' 'set(CMAKE_C_FLAGS_RELEASE "-O2 -DNDEBUG" CACHE STRING "Long-run release build" FORCE)' > "$RUNNER_TEMP/cvode_long_flags.cmake"
+          export CMAKE_TOOLCHAIN_FILE="$RUNNER_TEMP/cvode_long_flags.cmake"
+          python3 ci/cvode/build_cvode_fmu.py \
+            --seed-fmu seed_source/TripLens_CombinedCycle_TripTAC_CoSim.fmu \
+            --work long_work --out long_build --platform linux64
+          grep '^CMAKE_C_FLAGS_RELEASE:' long_work/model-build/CMakeCache.txt | tee long_build/actual_compiler_flags.txt
+          grep -q -- '-O2' long_build/actual_compiler_flags.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: long-cvode-linux-${{ github.run_number }}
+          path: long_build/
+          if-no-files-found: error
+          retention-days: 30
+
+  regression-2s:
+    needs: build-optimized-linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      TRIPLENS_USE_NATIVE_SEED: '1'
+      TRIPLENS_RETAIN_VALIDATED_NLS_GUESS: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: long-cvode-linux-${{ github.run_number }}
+          path: long_build
+      - run: python3 -m pip install 'fmpy==0.3.22'
+      - name: Recheck the optimized binary on the already-proven 2s baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p regression
+          python3 ci/cvode/probe_cvode_fmu.py \
+            --fmu long_build/TripLens_CombinedCycle_TripTAC_CoSim_linux64.fmu \
+            --case baseline --out regression --stop 2 --step 0.01 \
+            2> >(grep --line-buffered -E 'TRIPLENS_FMI_INTERNAL_SOLVER|TRIPLENS_CVODE_FMI_CALLBACK_CLEANUP_PASS|ERROR|Error|error|assert|CVODE' >&2)
+          python3 - <<'PY'
+          import json
+          r=json.load(open('regression/baseline_result.json'))
+          assert r['status']=='pass' and r['last_completed_time_s']>=2.0
+          # The release build must remain close to the previously executed Run4 reference.
+          ref=263109749.366061
+          got=r['final_outputs']['stElectricalPower']
+          assert abs(got-ref) < 5e4, (got,ref)
+          print('OPTIMIZED_2S_REGRESSION_PASS',got)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: long-cvode-regression-${{ github.run_number }}
+          path: regression/
+          if-no-files-found: warn
+          retention-days: 30
+
+  full-dynamic-420s:
+    needs: regression-2s
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    env:
+      TRIPLENS_USE_NATIVE_SEED: '1'
+      TRIPLENS_RETAIN_VALIDATED_NLS_GUESS: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: long-cvode-linux-${{ github.run_number }}
+          path: long_build
+      - name: Install independent FMI importer and HDF5 recorder
+        run: python3 -m pip install 'fmpy==0.3.22' 'h5py==3.12.1'
+      - name: 10 second all-variable gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p all_physics_10s
+          python3 ci/cvode/probe_all_dynamic_long.py \
+            --fmu long_build/TripLens_CombinedCycle_TripTAC_CoSim_linux64.fmu \
+            --out all_physics_10s --stop 10 --step 0.1 --label baseline_10s \
+            2> >(grep --line-buffered -E 'TRIPLENS_FMI_INTERNAL_SOLVER|TRIPLENS_CVODE_FMI_CALLBACK_CLEANUP_PASS|ERROR|Error|error|assert|CVODE' | tee all_physics_10s/runtime_key.log >&2)
+          python3 - <<'PY'
+          import json
+          r=json.load(open('all_physics_10s/long_all_dynamic_report.json'))
+          assert r['status']=='pass' and r['last_completed_time_s']>=10
+          assert r['all_dynamic_variable_count']>=12000
+          print('ALL_PHYSICS_10S_GATE_PASS',r['all_dynamic_variable_count'],r['wall_seconds'])
+          PY
+      - name: 420 second all-dynamic baseline at 0.1 second communication interval
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p all_physics_420s
+          python3 ci/cvode/probe_all_dynamic_long.py \
+            --fmu long_build/TripLens_CombinedCycle_TripTAC_CoSim_linux64.fmu \
+            --out all_physics_420s --stop 420 --step 0.1 --label baseline_420s \
+            2> >(grep --line-buffered -E 'TRIPLENS_FMI_INTERNAL_SOLVER|TRIPLENS_CVODE_FMI_CALLBACK_CLEANUP_PASS|ERROR|Error|error|assert|CVODE' | tee all_physics_420s/runtime_key.log >&2)
+          python3 - <<'PY'
+          import json
+          r=json.load(open('all_physics_420s/long_all_dynamic_report.json'))
+          assert r['status']=='pass' and r['last_completed_time_s']>=420
+          assert r['samples']==4201 and r['all_unit_bearing_real_finite'] is True
+          print('ALL_PHYSICS_420S_VERIFIED_PASS')
+          print(json.dumps(r,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: all-physics-420s-${{ github.run_number }}
+          path: |
+            all_physics_10s/
+            all_physics_420s/
+          if-no-files-found: warn
+          retention-days: 30
