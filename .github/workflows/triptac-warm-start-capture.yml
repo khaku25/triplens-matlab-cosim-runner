@@ -1,0 +1,102 @@
+name: TripTAC Full State Warm Start Capture
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/triptac-warm-start-capture.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: triptac-full-state-warm-start-capture
+  cancel-in-progress: false
+
+jobs:
+  native-state-capture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare unchanged pinned reference and isolated output directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p legacy_exact/vendor legacy_exact/build/warm_start/omhome
+          git clone --no-checkout https://github.com/Dwarf-Planet-Project/ThermoSysPro.git legacy_exact/vendor/ThermoSysPro
+          git -C legacy_exact/vendor/ThermoSysPro checkout --detach db81ae1b5a6a85f6c6c7693244cafa6087e18ff5
+          test "$(git -C legacy_exact/vendor/ThermoSysPro rev-parse HEAD)" = db81ae1b5a6a85f6c6c7693244cafa6087e18ff5
+          python3 legacy_exact/scripts/render_modelica.py --trip-time 600 --trip-ramp-duration 5 --stop-time 1000 --intervals 10000
+          cp legacy_exact/build/TripLens_CombinedCycle_TripTAC.mo legacy_exact/build/warm_start/reference.mo
+      - name: Solve native model and save all internal variables before any trip
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD/legacy_exact/build/warm_start/omhome:/root" -v "$PWD/legacy_exact:/workspace" -w /workspace openmodelica/openmodelica:v1.27.0-minimal omc /workspace/modelica/install_dependencies.mos
+          cat > legacy_exact/build/warm_start/capture.mos <<'MOS'
+          setCommandLineOptions("--std=3.4");
+          loadModel(Modelica,{"3.2.3"}); getErrorString();
+          loadFile("/workspace/vendor/ThermoSysPro/ThermoSysPro/package.mo"); getErrorString();
+          loadFile("/workspace/build/warm_start/reference.mo"); getErrorString();
+          cd("/workspace/build/warm_start");
+          simulate(TripLens_CombinedCycle_TripTAC, startTime=0, stopTime=300, numberOfIntervals=30, tolerance=1e-3, method="dassl", outputFormat="mat", variableFilter=".*", simflags="-noEventEmit -emit_protected", fileNamePrefix="native_full");
+          getErrorString();
+          MOS
+          docker run --rm -v "$PWD/legacy_exact/build/warm_start/omhome:/root" -v "$PWD/legacy_exact:/workspace" -w /workspace openmodelica/openmodelica:v1.27.0-minimal omc /workspace/build/warm_start/capture.mos > legacy_exact/build/warm_start/capture.log 2>&1
+          tail -35 legacy_exact/build/warm_start/capture.log
+          test -s legacy_exact/build/warm_start/native_full_res.mat
+          docker run --rm -v "$PWD/legacy_exact:/workspace" -w /workspace/build/warm_start openmodelica/openmodelica:v1.27.0-minimal ./native_full -outputFormat=csv -r=native_full.csv -emit_protected -noEventEmit > legacy_exact/build/warm_start/csv_run.log 2>&1
+          cat legacy_exact/build/warm_start/csv_run.log
+          sudo chown -R "$(id -u):$(id -g)" legacy_exact/build/warm_start
+      - name: Validate physical capture and create named snapshots
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import csv, hashlib, json, math, os
+          d=Path('legacy_exact/build/warm_start')
+          with (d/'native_full.csv').open(newline='') as f:
+              reader=csv.DictReader(f); names=reader.fieldnames; rows=list(reader)
+          assert names and len(names)>1000, 'A filtered display CSV is not a full state capture'
+          assert len(names)==len(set(names)), 'Duplicate names are unsafe for state mapping'
+          assert rows and abs(float(rows[-1]['time'])-300)<1e-6
+          critical=['Alternateur.Welec','BallonHP.P','BallonMP.P','BallonBP.P','BallonHP.zl','BallonMP.zl','BallonBP.zl']
+          for row in rows:
+              assert all(math.isfinite(float(row[n])) for n in critical)
+              assert float(row['Debit.y.signal'])>600 and float(row['Temperature.y.signal'])>890
+          summary={'diagnostic_only':True,'run_id':os.environ['GITHUB_RUN_ID'],'commit':os.environ['GITHUB_SHA'],'thermosyspro_commit':'db81ae1b5a6a85f6c6c7693244cafa6087e18ff5','rows':len(rows),'variables':len(names)-1,'final_time_s':float(rows[-1]['time']),'assertions_disabled':False,'snapshots':{},'sha256':{}}
+          for target in [0,300]:
+              candidates=[r for r in rows if abs(float(r['time'])-target)<1e-7]
+              assert candidates
+              row=candidates[-1]
+              values={n:float(v) for n,v in row.items() if n!='time' and math.isfinite(float(v))}
+              excluded=[n for n,v in row.items() if not math.isfinite(float(v))]
+              snapshot={'time_s':target,'values':values,'nonfinite_excluded':excluded}
+              (d/('native_snapshot_'+str(target)+'.json')).write_text(json.dumps(snapshot,indent=2,allow_nan=False))
+              summary['snapshots'][str(target)]={'finite_values':len(values),'excluded':excluded,'observed':{n:values[n] for n in critical}}
+          for name in ['reference.mo','native_full.csv','native_full_res.mat']:
+              summary['sha256'][name]=hashlib.sha256((d/name).read_bytes()).hexdigest()
+          (d/'capture_summary.json').write_text(json.dumps(summary,indent=2,allow_nan=False))
+          print(json.dumps(summary,indent=2)); print('NATIVE_FULL_STATE_CAPTURE_PASS_NOT_FMU_PASS')
+          PY
+      - name: Make diagnostics readable
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" legacy_exact/build/warm_start
+      - name: Preserve native snapshot evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: triptac-native-full-state-${{ github.run_number }}
+          path: |
+            legacy_exact/build/warm_start/*.mat
+            legacy_exact/build/warm_start/*.csv
+            legacy_exact/build/warm_start/*.json
+            legacy_exact/build/warm_start/*.mo
+            legacy_exact/build/warm_start/*.mos
+            legacy_exact/build/warm_start/*.log
+            legacy_exact/build/warm_start/*_init.xml
+          if-no-files-found: error
+          retention-days: 30
