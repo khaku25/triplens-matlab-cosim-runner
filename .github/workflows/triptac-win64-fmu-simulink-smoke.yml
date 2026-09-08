@@ -23,10 +23,10 @@ jobs:
       - name: Download Windows-ready TripTAC FMU
         uses: actions/download-artifact@v4
         with:
-          name: triptac-cloud-fmu-win64-mingw-6
+          name: triptac-cloud-fmu-win64-mingw-7
           path: fmu_artifact
           repository: khaku25/triplens-matlab-cosim-runner
-          run-id: 34212722783
+          run-id: 34213674359
           github-token: ${{ github.token }}
 
       - name: Import FMU and run Simulink smoke
