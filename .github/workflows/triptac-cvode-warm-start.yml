@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - 'ci/cvode/**'
+      - 'ci/cvode_allocator_fix.py'
+      - 'ci/matlab_cvode_completion_probe.m'
       - '.github/workflows/triptac-cvode-warm-start.yml'
   workflow_dispatch:
 
@@ -45,11 +47,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Avoid spending the diagnostic run optimizing 60 MB of generated C.
-          # This changes compiler optimization only, not equations or tolerances.
           printf '%s\n' 'set(CMAKE_C_FLAGS_RELEASE "-O0 -DNDEBUG" CACHE STRING "Diagnostic build" FORCE)' > "$RUNNER_TEMP/cvode_compile_flags.cmake"
           export CMAKE_TOOLCHAIN_FILE="$RUNNER_TEMP/cvode_compile_flags.cmake"
-          python3 -m py_compile ci/cvode/*.py
+          python3 -m py_compile ci/cvode/*.py ci/cvode_allocator_fix.py
           python3 ci/cvode/build_cvode_fmu.py \
             --seed-fmu seed_source/TripLens_CombinedCycle_TripTAC_CoSim.fmu \
             --work cvode_work --out cvode_build \
@@ -93,6 +93,7 @@ jobs:
               --case "$case" --out cvode_results --stop 2 --step 0.01 \
               2>&1 | tee "cvode_results/${case}.log"
             grep -q 'TRIPLENS_FMI_INTERNAL_SOLVER=cvode' "cvode_results/${case}.log"
+            grep -q 'TRIPLENS_CVODE_FMI_CALLBACK_CLEANUP_PASS' "cvode_results/${case}.log"
           done
       - uses: actions/upload-artifact@v4
         if: always()
@@ -112,22 +113,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          path: cvode-checkout
+          path: cvode-completion-checkout
           persist-credentials: false
-      - name: Download this run's Windows CVODE FMU, not an old Euler DLL
+      - name: Download this run's Windows CVODE FMU
         uses: actions/download-artifact@v4
         with:
           name: cvode-build-win64-${{ github.run_number }}
-          path: cvode-checkout/outputs
-      - name: Installed MATLAB actual Simulink baseline and input-response tests
+          path: cvode-completion-checkout/outputs
+      - name: Installed MATLAB actual Simulink completion and input-response tests
         shell: cmd
         run: |
-          "C:\Program Files\MATLAB\R2025b\bin\matlab.exe" -batch "setenv('GITHUB_WORKSPACE',fullfile(getenv('GITHUB_WORKSPACE'),'cvode-checkout')); cd(getenv('GITHUB_WORKSPACE')); addpath(fullfile(pwd,'ci')); matlab_selector_fmu_probe"
+          "C:\Program Files\MATLAB\R2025b\bin\matlab.exe" -batch "setenv('GITHUB_WORKSPACE',fullfile(getenv('GITHUB_WORKSPACE'),'cvode-completion-checkout')); cd(getenv('GITHUB_WORKSPACE')); addpath(fullfile(pwd,'ci')); matlab_cvode_completion_probe" > "cvode-completion-checkout\outputs\matlab_cvode_execution.log" 2>&1
       - name: Preserve actual Simulink model, traces, and errors
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: cvode-simulink-execution-${{ github.run_number }}
-          path: cvode-checkout/outputs/
+          path: cvode-completion-checkout/outputs/
           if-no-files-found: warn
           retention-days: 30
