@@ -52,7 +52,7 @@ jobs:
           checkModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_CombinedCycle_TripTAC_CoSim);
           getErrorString();
           buildModelFMU(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_CombinedCycle_TripTAC_CoSim,
-            version="2.0", fmuType="cs", fileNamePrefix="TripLens_CombinedCycle_TripTAC_CoSim", platforms={});
+            version="2.0", fmuType="cs", fileNamePrefix="TripLens_CombinedCycle_TripTAC_CoSim", platforms={""});
           getErrorString();
           MOS
           docker run --rm \
