@@ -14,13 +14,13 @@ permissions:
 
 concurrency:
   group: triptac-cvode-warm-start
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build-cvode:
     name: build-cvode-${{ matrix.platform }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -42,12 +42,20 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix
       - name: Build pinned SUNDIALS and actual CVODE FMU
+        shell: bash
         run: |
+          set -euo pipefail
+          # Avoid spending the diagnostic run optimizing 60 MB of generated C.
+          # This changes compiler optimization only, not equations or tolerances.
+          printf '%s\n' 'set(CMAKE_C_FLAGS_RELEASE "-O0 -DNDEBUG" CACHE STRING "Diagnostic build" FORCE)' > "$RUNNER_TEMP/cvode_compile_flags.cmake"
+          export CMAKE_TOOLCHAIN_FILE="$RUNNER_TEMP/cvode_compile_flags.cmake"
           python3 -m py_compile ci/cvode/*.py
           python3 ci/cvode/build_cvode_fmu.py \
             --seed-fmu seed_source/TripLens_CombinedCycle_TripTAC_CoSim.fmu \
             --work cvode_work --out cvode_build \
             --platform '${{ matrix.platform }}'
+          grep '^CMAKE_C_FLAGS_RELEASE:' cvode_work/model-build/CMakeCache.txt | tee cvode_build/actual_compiler_flags.txt
+          curl --fail --location --retry 2 'https://raw.githubusercontent.com/LLNL/sundials/84c029fe0b4b3c3bbf5cf8835f5828a6bb98b7a2/LICENSE' -o cvode_build/SUNDIALS_LICENSE.txt
       - name: Preserve build outputs and failures
         if: always()
         uses: actions/upload-artifact@v4
