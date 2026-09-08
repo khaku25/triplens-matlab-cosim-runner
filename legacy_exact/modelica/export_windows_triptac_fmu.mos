@@ -1,0 +1,12 @@
+setCommandLineOptions("--std=3.4");
+loadModel(Modelica, {"3.2.3"});
+getErrorString();
+loadFile("T:/legacy_exact/vendor/ThermoSysPro/ThermoSysPro/package.mo");
+getErrorString();
+loadFile("T:/legacy_exact/build/TripLens_CombinedCycle_TripTAC_CoSim.mo");
+getErrorString();
+cd("T:/legacy_exact/build/winfmu");
+checkModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_CombinedCycle_TripTAC_CoSim);
+getErrorString();
+buildModelFMU(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_CombinedCycle_TripTAC_CoSim, version="2.0", fmuType="cs", fileNamePrefix="TripLens_CombinedCycle_TripTAC_CoSim");
+getErrorString();
