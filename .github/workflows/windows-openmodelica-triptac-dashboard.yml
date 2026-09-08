@@ -1,0 +1,95 @@
+name: Windows OpenModelica TripTAC Dashboard
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'legacy_exact/modelica/export_windows_triptac_fmu.mos'
+      - '.github/workflows/windows-openmodelica-triptac-dashboard.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-triptac-cosim:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 180
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Map ASCII workspace
+        shell: cmd
+        run: |
+          subst T: /d >nul 2>nul
+          subst T: "%GITHUB_WORKSPACE%"
+          if errorlevel 1 exit /b 1
+
+      - name: Prepare exact pinned ThermoSysPro and wrapper
+        shell: cmd
+        run: |
+          T:
+          if exist legacy_exact\vendor\ThermoSysPro rmdir /s /q legacy_exact\vendor\ThermoSysPro
+          if exist legacy_exact\build\winfmu rmdir /s /q legacy_exact\build\winfmu
+          if exist fmu_artifact rmdir /s /q fmu_artifact
+          mkdir legacy_exact\vendor 2>nul
+          mkdir legacy_exact\build\winfmu 2>nul
+          mkdir fmu_artifact\cosim 2>nul
+          "C:\Program Files\Git\cmd\git.exe" clone --no-checkout https://github.com/Dwarf-Planet-Project/ThermoSysPro.git legacy_exact\vendor\ThermoSysPro
+          if errorlevel 1 exit /b 1
+          "C:\Program Files\Git\cmd\git.exe" -C legacy_exact\vendor\ThermoSysPro checkout --detach db81ae1b5a6a85f6c6c7693244cafa6087e18ff5
+          if errorlevel 1 exit /b 1
+          python legacy_exact\scripts\build_trip_tac_cosim.py
+          if errorlevel 1 exit /b 1
+          if not exist legacy_exact\build\TripLens_CombinedCycle_TripTAC_CoSim.mo exit /b 1
+
+      - name: Install exact Modelica dependency with local OpenModelica
+        shell: cmd
+        run: |
+          "C:\Program Files\OpenModelica1.28.0-dev-64bit\bin\omc.exe" T:\legacy_exact\modelica\install_dependencies.mos
+          if errorlevel 1 exit /b 1
+
+      - name: Build FMI 2.0 Co-Simulation FMU with Windows OpenModelica
+        shell: cmd
+        run: |
+          "C:\Program Files\OpenModelica1.28.0-dev-64bit\bin\omc.exe" T:\legacy_exact\modelica\export_windows_triptac_fmu.mos > T:\legacy_exact\build\winfmu\export_windows_fmu.log 2>&1
+          type T:\legacy_exact\build\winfmu\export_windows_fmu.log
+          if not exist T:\legacy_exact\build\winfmu\TripLens_CombinedCycle_TripTAC_CoSim.fmu exit /b 1
+          copy /Y T:\legacy_exact\build\winfmu\TripLens_CombinedCycle_TripTAC_CoSim.fmu T:\fmu_artifact\cosim\TripLens_CombinedCycle_TripTAC_CoSim.fmu
+
+      - name: Verify Windows FMU payload
+        shell: cmd
+        run: |
+          T:
+          python -c "import zipfile; p=r'fmu_artifact\cosim\TripLens_CombinedCycle_TripTAC_CoSim.fmu'; z=zipfile.ZipFile(p); n=z.namelist(); x=z.read('modelDescription.xml').decode('utf-8'); req=['gtExhaustFlowCmd','gtExhaustTemperatureCmd','stElectricalPower','hpDrumLevel','ipDrumLevel','lpDrumLevel','hpDrumPressure','ipDrumPressure','lpDrumPressure']; assert all(v in x for v in req),[v for v in req if v not in x]; assert 'CoSimulation' in x; w=[q for q in n if q.startswith('binaries/win64/')]; assert w,'win64 binary missing'; print('WINDOWS TRIPTAC FMU PASS'); print('\n'.join(w))"
+
+      - name: Build dashboard and run real Simulink-FMU smoke
+        shell: cmd
+        run: |
+          "C:\Program Files\MATLAB\R2025b\bin\matlab.exe" -batch "addpath(fullfile(getenv('GITHUB_WORKSPACE'),'matlab')); build_triptac_cosim_dashboard"
+
+      - name: Upload Windows FMU and co-simulation proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: triptac-windows-openmodelica-dashboard-${{ github.run_number }}
+          path: |
+            legacy_exact/build/winfmu/export_windows_fmu.log
+            fmu_artifact/cosim/TripLens_CombinedCycle_TripTAC_CoSim.fmu
+            outputs/triptac_cosim_dashboard_report.json
+            outputs/TripLens_ECMS_DigitalTwin.slx
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Remove ASCII workspace mapping
+        if: always()
+        shell: cmd
+        run: |
+          subst T: /d >nul 2>nul
+          exit /b 0
