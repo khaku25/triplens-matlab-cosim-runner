@@ -1,0 +1,33 @@
+name: Bootstrap ECMS Digital Twin
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'matlab/bootstrap_ecms_digital_twin.m'
+      - '.github/workflows/bootstrap-ecms-digital-twin.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bootstrap:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Create or verify ECMS digital twin shell in MATLAB Drive
+        shell: cmd
+        run: |
+          "C:\Program Files\MATLAB\R2025b\bin\matlab.exe" -batch "addpath(fullfile(getenv('GITHUB_WORKSPACE'),'matlab')); bootstrap_ecms_digital_twin"
+
+      - name: Upload bootstrap report
+        uses: actions/upload-artifact@v4
+        with:
+          name: ecms-digital-twin-bootstrap-${{ github.run_number }}
+          path: outputs/ecms_digital_twin_bootstrap.json
+          if-no-files-found: error
+          retention-days: 30
