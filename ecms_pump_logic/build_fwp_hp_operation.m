@@ -150,10 +150,13 @@ simIn=simIn.setExternalInput(ds);
 simIn=simIn.setModelParameter('StopTime','30');
 simOut=sim(simIn); yout=simOut.yout;
 
-runEnable=signal(yout,'run_enable_cmd'); cbTrip=signal(yout,'feeder_cb_trip_cmd');
-cbClosed=signal(yout,'feeder_cb_closed_fb'); tripLatch=signal(yout,'trip_latched');
-ready=signal(yout,'ready'); running=signal(yout,'running'); speed=signal(yout,'speed_rpm');
-runFb=signal(yout,'run_fb'); speedProven=signal(yout,'speed_proven');
+% Root Outport Dataset element names vary by MATLAB/Simulink release and
+% localized installation.  The generated model's Outport numbers are the
+% stable interface contract, so read the results by port order.
+runEnable=signal(yout,1); cbTrip=signal(yout,2);
+cbClosed=signal(yout,3); tripLatch=signal(yout,4);
+ready=signal(yout,5); running=signal(yout,7); speed=signal(yout,11);
+runFb=signal(yout,10); speedProven=signal(yout,12);
 
 tripCmdTime=firstTrueTime(cbTrip,18);
 cbOpenTime=firstFalseTime(cbClosed,18);
@@ -431,8 +434,16 @@ sprintf('COAST_TAU_S = %.17g;',coastTau) ...
 code=strjoin(lines,newline);
 end
 
-function ts=signal(yout,name)
-ts=yout.getElement(name).Values;
+function ts=signal(yout,index)
+element=yout.getElement(index);
+if isa(element,'Simulink.SimulationData.Signal')
+    ts=element.Values;
+elseif isa(element,'timeseries')
+    ts=element;
+else
+    error('TripLens:UnexpectedOutputType', ...
+        'Unexpected output element type at Outport %d: %s',index,class(element));
+end
 end
 function value=valueAt(ts,q)
 [~,idx]=min(abs(ts.Time-q)); value=double(ts.Data(idx));
