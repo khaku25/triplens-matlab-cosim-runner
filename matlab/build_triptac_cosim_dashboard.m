@@ -30,8 +30,12 @@ projectDir = fullfile(mdrive,'TripLens_ECMS_DigitalTwin');
 if ~isfolder(projectDir), mkdir(projectDir); end
 fmuDir = fullfile(projectDir,'fmu');
 if ~isfolder(fmuDir), mkdir(fmuDir); end
-fmuWork = fullfile(fmuDir,'TripLens_CombinedCycle_TripTAC_CoSim.fmu');
+fmuFileName = 'TripLens_CombinedCycle_TripTAC_CoSim.fmu';
+fmuWork = fullfile(fmuDir,fmuFileName);
 copyfile(fmuSource,fmuWork,'f');
+% The FMU Import block accepts the archive name only. Make its directory
+% resolvable for this MATLAB session instead of passing an absolute path.
+addpath(fmuDir,'-begin');
 
 %% Inspect FMU payload and compile a Windows binary if needed
 inspectDir = fullfile(tempdir,['triplens_fmu_' char(java.util.UUID.randomUUID)]);
@@ -104,15 +108,16 @@ add_block('simulink/Ports & Subsystems/In1',[thermoSub '/GT_Exhaust_Temperature'
 load_system('simulink_extras');
 fmuBlock = [thermoSub '/Thermo_FMU'];
 add_block('simulink_extras/FMU Import/FMU',fmuBlock,'Position',[150 45 470 360]);
-set_param(fmuBlock,'FMUName',fmuWork,'FMUInputMapping','Flat','FMUOutputMapping','Flat', ...
+set_param(fmuBlock,'FMUName',fmuFileName,'FMUInputMapping','Flat','FMUOutputMapping','Flat', ...
     'FMUSampleTime','0.1');
 set_param(modelName,'SimulationCommand','update');
 ph = get_param(fmuBlock,'PortHandles');
 assert(numel(ph.Inport)==2,'TripLens:FMUInputCount','Expected 2 FMU input ports, got %d.',numel(ph.Inport));
 assert(numel(ph.Outport)>=7,'TripLens:FMUOutputCount','Expected >=7 FMU output ports, got %d.',numel(ph.Outport));
 
-outNames = {'ST_Electrical_Power','HP_Drum_Level','IP_Drum_Level','LP_Drum_Level', ...
-            'HP_Drum_Pressure','IP_Drum_Pressure','LP_Drum_Pressure'};
+% FMI modelDescription.xml defines this exact output-port order.
+outNames = {'HP_Drum_Level','HP_Drum_Pressure','IP_Drum_Level','IP_Drum_Pressure', ...
+            'LP_Drum_Level','LP_Drum_Pressure','ST_Electrical_Power'};
 for k = 1:7
     y = 30 + k*45;
     add_block('simulink/Ports & Subsystems/Out1',[thermoSub '/' outNames{k}], ...
@@ -167,11 +172,14 @@ add_line(modelName,'GT_Temp_Select/1','Thermo_Interface/2','autorouting','on');
 %% Engineering-unit output channels
 scaleNames = {'ST_MW','HP_Level','IP_Level','LP_Level','HP_Pressure_MPa','IP_Pressure_MPa','LP_Pressure_MPa'};
 gains = {'1e-6','1','1','1','1e-6','1e-6','1e-6'};
+% Present engineering channels in operator order while preserving FMU port order:
+% HP level, HP pressure, IP level, IP pressure, LP level, LP pressure, ST power.
+thermoPorts = [7 1 3 5 2 4 6];
 for k=1:7
     y = 390 + (k-1)*48;
     add_block('simulink/Math Operations/Gain',[modelName '/' scaleNames{k}], ...
         'Gain',gains{k},'Position',[760 y 830 y+28]);
-    add_line(modelName,sprintf('Thermo_Interface/%d',k),[scaleNames{k} '/1'],'autorouting','on');
+    add_line(modelName,sprintf('Thermo_Interface/%d',thermoPorts(k)),[scaleNames{k} '/1'],'autorouting','on');
 end
 
 dispNames = {'ST_MW_Display','HP_Level_Display','IP_Level_Display','LP_Level_Display', ...
