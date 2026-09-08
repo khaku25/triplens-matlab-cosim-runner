@@ -3,8 +3,9 @@ function report = run_ecms_simulink(varargin)
 %
 % The model stays on the self-hosted runner. Set TRIPLENS_ECMS_MODEL_PATH
 % to an absolute .slx/.mdl path, or place exactly one model under ecms/.
-% TRIPLENS_ECMS_INIT_SCRIPT may point to an optional initialization script.
-% TRIPLENS_ECMS_STOP_TIME optionally overrides the model stop time.
+% TRIPLENS_ECMS_INIT_SCRIPT may point to an initialization/entry script.
+% If that script loads or creates exactly one Simulink model, an explicit
+% model path is optional. TRIPLENS_ECMS_STOP_TIME optionally overrides time.
 
 p = inputParser;
 addParameter(p,"InventoryOnly",true,@(x)islogical(x)&&isscalar(x));
@@ -24,11 +25,6 @@ try
     assert(license("test","Simulink"), ...
         "TripLens:SimulinkUnavailable","A Simulink license is not available on this runner.");
 
-    modelPath = resolveLocalFile("TRIPLENS_ECMS_MODEL_PATH",repoRoot,["*.slx","*.mdl"],"ECMS model");
-    [modelDir,modelName,modelExt] = fileparts(modelPath);
-    addpath(modelDir,"-begin");
-    pathCleanup = onCleanup(@() rmpath(modelDir)); %#ok<NASGU>
-
     initPath = string(getenv("TRIPLENS_ECMS_INIT_SCRIPT"));
     if strlength(initPath)>0
         initPath = resolvePath(initPath,repoRoot);
@@ -42,14 +38,21 @@ try
         report.InitScript = "";
     end
 
-    load_system(modelName);
+    [modelName,modelFile,modelDir] = resolveModel(repoRoot);
+    if strlength(modelDir)>0
+        addpath(modelDir,"-begin");
+        pathCleanup = onCleanup(@() rmpath(modelDir)); %#ok<NASGU>
+    end
+    if ~bdIsLoaded(modelName)
+        load_system(modelFile);
+    end
     modelCleanup = onCleanup(@() close_system(modelName,0)); %#ok<NASGU>
 
     blocks = find_system(modelName,"LookUnderMasks","all","FollowLinks","on","Type","Block");
     inports = find_system(modelName,"SearchDepth",1,"BlockType","Inport");
     outports = find_system(modelName,"SearchDepth",1,"BlockType","Outport");
 
-    report.ModelFile = char(modelName + modelExt);
+    report.ModelFile = char(modelFile);
     report.ModelName = char(modelName);
     report.SolverType = get_param(modelName,"SolverType");
     report.Solver = get_param(modelName,"Solver");
@@ -98,24 +101,50 @@ catch ME
 end
 end
 
-function modelPath = resolveLocalFile(envName,repoRoot,patterns,label)
-raw = string(getenv(envName));
+function [modelName,modelFile,modelDir] = resolveModel(repoRoot)
+raw = string(getenv("TRIPLENS_ECMS_MODEL_PATH"));
 if strlength(raw)>0
-    modelPath = resolvePath(raw,repoRoot);
-    assert(isfile(modelPath),"TripLens:MissingLocalFile","%s not found: %s",label,modelPath);
+    modelFile = resolvePath(raw,repoRoot);
+    assert(isfile(modelFile),"TripLens:MissingLocalFile","ECMS model not found: %s",modelFile);
+    [modelDir,modelName,~] = fileparts(modelFile);
+    modelDir = string(modelDir);
+    modelName = string(modelName);
     return;
 end
 
 folder = fullfile(repoRoot,"ecms");
 matches = struct([]);
-for pattern = patterns
+for pattern = ["*.slx","*.mdl"]
     found = dir(fullfile(folder,pattern));
     if isempty(matches), matches = found; else, matches = [matches; found]; end %#ok<AGROW>
 end
-assert(numel(matches)==1,"TripLens:AmbiguousModel", ...
-    "Set %s, or place exactly one .slx/.mdl file under %s. Found %d.", ...
-    envName,folder,numel(matches));
-modelPath = string(fullfile(matches(1).folder,matches(1).name));
+if numel(matches)==1
+    modelFile = string(fullfile(matches(1).folder,matches(1).name));
+    [modelDir,modelName,~] = fileparts(modelFile);
+    modelDir = string(modelDir);
+    modelName = string(modelName);
+    return;
+end
+
+loaded = find_system("SearchDepth",0,"Type","BlockDiagram");
+models = strings(0,1);
+for k=1:numel(loaded)
+    candidate = string(loaded{k});
+    try
+        if strcmp(get_param(candidate,"BlockDiagramType"),"model")
+            models(end+1,1) = candidate; %#ok<AGROW>
+        end
+    catch
+    end
+end
+models = unique(models);
+assert(numel(models)==1,"TripLens:AmbiguousModel", ...
+    ["Set TRIPLENS_ECMS_MODEL_PATH, place exactly one .slx/.mdl under %s, " ...
+     "or make TRIPLENS_ECMS_INIT_SCRIPT load exactly one model. Found %d files and %d loaded models."], ...
+    folder,numel(matches),numel(models));
+modelName = models(1);
+modelFile = "<loaded-by-init-script:" + modelName + ">";
+modelDir = "";
 end
 
 function path = resolvePath(raw,repoRoot)
