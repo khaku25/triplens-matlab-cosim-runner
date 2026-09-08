@@ -65,7 +65,8 @@ addLogicSubsystem(modelName,motor,{'runEnable','cbClosed'},{'speedRpm','runFeedb
 cbDelayName='CB_Feedback_Next_Sync';
 cbDelay=[modelName '/' cbDelayName];
 add_block('simulink/Discrete/Unit Delay',cbDelay,'SampleTime',num2str(Ts,'%.12g'), ...
-    'InitialCondition','1','Position',[1080 110 1160 145]);
+    'OutDataTypeStr','boolean','InitialCondition','true', ...
+    'Position',[1080 110 1160 145]);
 speedDelayName='Speed_Feedback_Next_Sync';
 speedDelay=[modelName '/' speedDelayName];
 add_block('simulink/Discrete/Unit Delay',speedDelay,'SampleTime',num2str(Ts,'%.12g'), ...
