@@ -62,10 +62,12 @@ motor='Motor_Shaft_Dynamics';
 addLogicSubsystem(modelName,motor,{'runEnable','cbClosed'},{'speedRpm','runFeedback'}, ...
     motorCode(Ts,ratedRpm,zeroSpeedRpm,accelTau,coastTau),[760 390 1035 530],[0.78 0.93 0.80]);
 
-cbDelay=[modelName '/CB_Feedback_Next_Sync'];
+cbDelayName='CB_Feedback_Next_Sync';
+cbDelay=[modelName '/' cbDelayName];
 add_block('simulink/Discrete/Unit Delay',cbDelay,'SampleTime',num2str(Ts,'%.12g'), ...
     'InitialCondition','1','Position',[1080 110 1160 145]);
-speedDelay=[modelName '/Speed_Feedback_Next_Sync'];
+speedDelayName='Speed_Feedback_Next_Sync';
+speedDelay=[modelName '/' speedDelayName];
 add_block('simulink/Discrete/Unit Delay',speedDelay,'SampleTime',num2str(Ts,'%.12g'), ...
     'InitialCondition','0','Position',[1080 420 1160 455]);
 
@@ -75,8 +77,8 @@ for k=1:numel(controllerRoot)
     add_line(modelName,['in_double_' num2str(controllerRoot(k)) '/1'], ...
         [controller '/' num2str(k)],'autorouting','on');
 end
-add_line(modelName,[cbDelay '/1'],[controller '/10'],'autorouting','on');
-add_line(modelName,[speedDelay '/1'],[controller '/11'],'autorouting','on');
+add_line(modelName,[cbDelayName '/1'],[controller '/10'],'autorouting','on');
+add_line(modelName,[speedDelayName '/1'],[controller '/11'],'autorouting','on');
 
 % Controller -> breaker. The breaker receives a separate reclose request.
 add_line(modelName,[controller '/2'],[breaker '/1'],'autorouting','on');
@@ -85,13 +87,13 @@ add_line(modelName,[controller '/3'],[breaker '/3'],'autorouting','on');
 add_line(modelName,'in_double_6/1',[breaker '/4'],'autorouting','on');
 add_line(modelName,'in_double_9/1',[breaker '/5'],'autorouting','on');
 add_line(modelName,'in_double_10/1',[breaker '/6'],'autorouting','on');
-add_line(modelName,[speedDelay '/1'],[breaker '/7'],'autorouting','on');
-add_line(modelName,[breaker '/1'],[cbDelay '/1'],'autorouting','on');
+add_line(modelName,[speedDelayName '/1'],[breaker '/7'],'autorouting','on');
+add_line(modelName,[breaker '/1'],[cbDelayName '/1'],'autorouting','on');
 
 % Controller/breaker -> motor and motor -> next synchronization point.
 add_line(modelName,[controller '/1'],[motor '/1'],'autorouting','on');
 add_line(modelName,[breaker '/1'],[motor '/2'],'autorouting','on');
-add_line(modelName,[motor '/1'],[speedDelay '/1'],'autorouting','on');
+add_line(modelName,[motor '/1'],[speedDelayName '/1'],'autorouting','on');
 
 outputNames={'run_enable_cmd','feeder_cb_trip_cmd','feeder_cb_closed_fb', ...
     'trip_latched','ready','starting','running','stopping','tripped','run_fb', ...
