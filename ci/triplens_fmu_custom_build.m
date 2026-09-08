@@ -1,8 +1,9 @@
 function buildInformation = triplens_fmu_custom_build(buildInformation)
 % Repair MATLAB's generic source-FMU build information for OpenModelica.
-% OpenModelica FMUs can contain generated split C files that are not all
-% surfaced by the generic importer. Missing those files compiles cleanly
-% but fails at the final link with residualFunc*/initial-equation symbols.
+% 1) include all split OpenModelica C sources,
+% 2) compile bundled cminpack as static code on Windows, and
+% 3) convert source-FMU prefixed FMI entry points to DLL/shared-object entry
+%    points. FMI 2.0 requires the actual fmi2* names for a DLL.
 
 srcFiles = buildInformation.getSourceFiles(true,true);
 srcPaths = buildInformation.getSourcePaths(true);
@@ -34,6 +35,35 @@ end
 sourceRoots = unique(sourceRoots(strlength(sourceRoots)>0),'stable');
 assert(~isempty(sourceRoots),'TripLens:NoOMCSourcesRoot', ...
     'Could not infer the extracted OpenModelica FMU sources root.');
+
+% The OpenModelica package is a source-code FMU, so its generated code can
+% define FMI2_FUNCTION_PREFIX. That is correct for source/static linkage but
+% not for the DLL we are creating for Simulink. Remove only that preprocessor
+% definition from the extracted build copy. With no prefix, fmi2Functions.h
+% also applies the normal Windows dllexport decoration.
+prefixPat = '(?m)^[ \t]*#define[ \t]+FMI2_FUNCTION_PREFIX[^\r\n]*';
+patchedPrefixFiles = 0;
+for r = 1:numel(sourceRoots)
+    root = sourceRoots(r);
+    textHits = [dir(fullfile(root,'**','*.c')); dir(fullfile(root,'**','*.h'))];
+    for k = 1:numel(textHits)
+        p = fullfile(textHits(k).folder,textHits(k).name);
+        txt = fileread(p);
+        patched = regexprep(txt,prefixPat, ...
+            '/* TripLens DLL build: FMI2_FUNCTION_PREFIX intentionally removed */');
+        if ~strcmp(txt,patched)
+            fid = fopen(p,'w');
+            assert(fid>=0,'TripLens:PrefixPatchWrite','Could not patch FMI source file.');
+            fwrite(fid,patched,'char');
+            fclose(fid);
+            patchedPrefixFiles = patchedPrefixFiles + 1;
+            fprintf('CUSTOM_STRIPPED_FMI2_PREFIX=%s\n',p);
+        end
+    end
+end
+fprintf('CUSTOM_STRIPPED_FMI2_PREFIX_FILE_COUNT=%d\n',patchedPrefixFiles);
+assert(patchedPrefixFiles>=1,'TripLens:NoFMI2PrefixFound', ...
+    'No FMI2_FUNCTION_PREFIX definition was found in the extracted source FMU.');
 
 % CMINPACK is built into the source FMU here, not consumed as a Windows DLL.
 % Without this define MinGW can emit __imp_dpmpar_/__imp_enorm_ references.
