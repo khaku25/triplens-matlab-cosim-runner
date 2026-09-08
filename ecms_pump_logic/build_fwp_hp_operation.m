@@ -57,6 +57,10 @@ breaker='Feeder_Breaker_Actuator';
 breakerInputs={'cbTrip','recloseRequest','tripLatch','cbReady','busKv','electricalTrip','speedRpm'};
 addLogicSubsystem(modelName,breaker,breakerInputs,{'cbClosed'}, ...
     breakerCode(breakerOpenN,busMinKv,zeroSpeedRpm),[760 55 1035 285],[1 0.84 0.68]);
+cbToDoubleName='CB_Feedback_As_Double';
+cbToDouble=[modelName '/' cbToDoubleName];
+add_block('simulink/Signal Attributes/Data Type Conversion',cbToDouble, ...
+    'OutDataTypeStr','double','Position',[1060 185 1120 215]);
 
 motor='Motor_Shaft_Dynamics';
 addLogicSubsystem(modelName,motor,{'runEnable','cbClosed'},{'speedRpm','runFeedback'}, ...
@@ -65,8 +69,7 @@ addLogicSubsystem(modelName,motor,{'runEnable','cbClosed'},{'speedRpm','runFeedb
 cbDelayName='CB_Feedback_Next_Sync';
 cbDelay=[modelName '/' cbDelayName];
 add_block('simulink/Discrete/Unit Delay',cbDelay,'SampleTime',num2str(Ts,'%.12g'), ...
-    'OutDataTypeStr','boolean','InitialCondition','true', ...
-    'Position',[1080 110 1160 145]);
+    'InitialCondition','1','Position',[1160 110 1240 145]);
 speedDelayName='Speed_Feedback_Next_Sync';
 speedDelay=[modelName '/' speedDelayName];
 add_block('simulink/Discrete/Unit Delay',speedDelay,'SampleTime',num2str(Ts,'%.12g'), ...
@@ -89,11 +92,12 @@ add_line(modelName,'in_double_6/1',[breaker '/4'],'autorouting','on');
 add_line(modelName,'in_double_9/1',[breaker '/5'],'autorouting','on');
 add_line(modelName,'in_double_10/1',[breaker '/6'],'autorouting','on');
 add_line(modelName,[speedDelayName '/1'],[breaker '/7'],'autorouting','on');
-add_line(modelName,[breaker '/1'],[cbDelayName '/1'],'autorouting','on');
+add_line(modelName,[breaker '/1'],[cbToDoubleName '/1'],'autorouting','on');
+add_line(modelName,[cbToDoubleName '/1'],[cbDelayName '/1'],'autorouting','on');
 
 % Controller/breaker -> motor and motor -> next synchronization point.
 add_line(modelName,[controller '/1'],[motor '/1'],'autorouting','on');
-add_line(modelName,[breaker '/1'],[motor '/2'],'autorouting','on');
+add_line(modelName,[cbToDoubleName '/1'],[motor '/2'],'autorouting','on');
 add_line(modelName,[motor '/1'],[speedDelayName '/1'],'autorouting','on');
 
 outputNames={'run_enable_cmd','feeder_cb_trip_cmd','feeder_cb_closed_fb', ...
