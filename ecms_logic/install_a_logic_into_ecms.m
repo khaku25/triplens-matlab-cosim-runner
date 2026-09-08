@@ -86,8 +86,27 @@ end
 set_param(target,'Description', ...
     'Validated A-program logic core v2. Absolute kV/MW inputs; model-calibrated, not plant-approved.');
 set_param(mainName,'SolverType','Fixed-step','Solver','FixedStepDiscrete','FixedStep','0.001');
-set_param(mainName,'SimulationCommand','update');
 save_system(mainName,mainPath);
+
+fmuName = 'TripLens_CombinedCycle_TripTAC_CoSim.fmu';
+fmuMatches = dir(fullfile(mdrive,'**',fmuName));
+compilePass = false;
+compileStatus = 'PENDING_MISSING_COSIM_FMU';
+compileMessage = ['Logic installed and saved. Full ECMS compile waits for ' fmuName '.'];
+if ~isempty(fmuMatches)
+    fmuDir = fmuMatches(1).folder;
+    addpath(fmuDir,'-begin');
+    cleanupFmuPath = onCleanup(@() rmpath(fmuDir)); %#ok<NASGU>
+    try
+        set_param(mainName,'SimulationCommand','update');
+        compilePass = true;
+        compileStatus = 'PASS';
+        compileMessage = ['ECMS compile update passed with FMU from ' fmuDir];
+    catch compileErr
+        compileStatus = 'PENDING_ECMS_DEPENDENCY';
+        compileMessage = compileErr.message;
+    end
+end
 
 report=struct();
 report.model=mainName; report.model_path=mainPath;
@@ -96,7 +115,9 @@ report.referenced_model=coreName; report.referenced_model_path=corePath;
 report.input_count=numel(inputs); report.output_count=numel(outputs);
 report.inputs=inputs; report.outputs=outputs;
 report.solver='FixedStepDiscrete'; report.fixed_step_s=0.001;
-report.compile_update_pass=true; report.installed=true;
+report.compile_update_pass=compilePass; report.compile_status=compileStatus;
+report.compile_message=compileMessage; report.installed=true;
+report.fmu_search_name=fmuName; report.fmu_match_count=numel(fmuMatches);
 report.install_mode='SAFE_IDEMPOTENT_MODEL_REFERENCE';
 report.note=['A logic core installed into the ECMS shell. External Electrical/Thermo ' ...
     'signals remain to be wired during co-simulation integration.'];
