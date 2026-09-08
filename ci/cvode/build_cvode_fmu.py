@@ -1,14 +1,15 @@
-"""Rebuild the proven-initializing source FMU with CVODE, without local OMC.
+"""Build isolated native-seeded CVODE FMUs; physics is not modified.
 
-The Modelica generated equations, seed mapping, and isolated early-convergence
-correction are retained byte-for-byte. Added sources are pinned OMC CVODE code.
-This is a diagnostic build; compilation alone is never a simulation PASS.
+CVODE source comes from pinned OMC. An explicitly recorded allocator repair
+pairs the FMI-owned outer CVODE structure with the importer's freeMemory.
+Build success alone never establishes a simulation result.
 """
 from __future__ import annotations
 import argparse
 import hashlib
 import json
 from pathlib import Path
+import runpy
 import shutil
 import subprocess
 import tarfile
@@ -62,21 +63,21 @@ def main() -> None:
         download('https://raw.githubusercontent.com/OpenModelica/OpenModelica/v1.27.0/OMCompiler/SimulationRuntime/c/simulation/solver/'+name,p)
         b=p.read_bytes()
         assert hashlib.sha1(b'blob '+str(len(b)).encode()+b'\0'+b).hexdigest()==blob, 'OMC runtime revision mismatch'
-    # Prove which solver was actually selected, not just which DLL was linked.
+    allocator_fix=runpy.run_path(str(Path(__file__).resolve().parents[1]/'cvode_allocator_fix.py'))['apply'](src)
+    (out/'allocator_fix.json').write_text(json.dumps(allocator_fix,indent=2))
+    # Prove which solver was selected at runtime, not only linked into the DLL.
     p=src/'fmi-export/fmu_read_flags.c'; text=p.read_text()
     needle='  comp->solverInfo = solverInfo;'
     assert text.count(needle)==1
     p.write_text(text.replace(needle,'  fprintf(stderr, "TRIPLENS_FMI_INTERNAL_SOLVER=%s\\n", SOLVER_METHOD_NAME[solverInfo->solverMethod]);\n'+needle))
     (root/'resources'/f'{MODEL}_flags.json').write_text(json.dumps({'s':'cvode'},indent=2)+'\n')
-    # New GUID prevents the importer from accidentally using an Euler cache.
     p=root/'modelDescription.xml'; text=p.read_text(); old=ET.fromstring(text).get('guid')
-    new='{'+str(uuid.uuid5(uuid.NAMESPACE_URL,SEED_SHA+'-cvode-v1'))+'}'
+    new='{'+str(uuid.uuid5(uuid.NAMESPACE_URL,SEED_SHA+'-cvode-v2-callback-free'))+'}'
     p.write_text(text.replace(old,new))
     for p in src.rglob('*'):
         if p.is_file() and p.suffix in {'.c','.h'}:
             b=p.read_bytes()
             if old.encode() in b: p.write_bytes(b.replace(old.encode(),new.encode()))
-    # Generated physical source may differ only in its FMU identity string.
     with zipfile.ZipFile(a.seed_fmu) as z:
         for name in generated:
             assert (src/name).read_bytes().replace(new.encode(),old.encode())==z.read('sources/'+name)
@@ -100,9 +101,6 @@ def main() -> None:
     run(['cmake','--install',str(sb)],out/'sundials-install.log')
     libs=list((prefix/'lib').glob('libsundials*.a'))+list((prefix/'lib64').glob('libsundials*.a'))
     assert any('cvode' in p.name for p in libs) and any('nvecserial' in p.name for p in libs)
-    # The stock FMU source package omitted CVODE C sources/dependencies and some
-    # ModelicaExternalC sources from its generic build list. Compile all its
-    # actual C translation units, excluding include-only *_info.c files.
     project=work/'compile'; project.mkdir()
     cmake='''cmake_minimum_required(VERSION 3.16)
 project(TripLensCVODE C)
@@ -153,7 +151,7 @@ endif()
         'sundials_static_linked':True,'generated_equations_unchanged':True,
         'native_seed_and_previous_runtime_correction_unchanged':True,
         'physical_assertions_retained':True,'simulation_pass':False,
-        'binary_sha256':sha(binary),'required_environment':
+        'allocator_fix':allocator_fix,'binary_sha256':sha(binary),'required_environment':
         ['TRIPLENS_USE_NATIVE_SEED=1','TRIPLENS_RETAIN_VALIDATED_NLS_GUESS=1']}
     (root/'resources'/'cvode_build_manifest.json').write_text(json.dumps(manifest,indent=2))
     fmu=out/(MODEL+'_'+a.platform+'.fmu')
