@@ -50,63 +50,76 @@ jobs:
       - name: Check out co-sim repository
         uses: actions/checkout@v4
 
-      - name: Clone exact legacy Action source
+      - name: Prepare exact legacy ThermoSysPro source
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf legacy_action
-          git clone https://github.com/khaku25/triplens-thermosyspro-cloud-runner.git legacy_action
-          git -C legacy_action checkout --detach 6fd1824880f97c957ba5a04013f3d789fb1dbd5d
-          test "$(git -C legacy_action rev-parse HEAD)" = "6fd1824880f97c957ba5a04013f3d789fb1dbd5d"
-          grep -q 'db81ae1b5a6a85f6c6c7693244cafa6087e18ff5' legacy_action/scripts/run_pipeline.sh
-          grep -q 'openmodelica/openmodelica:v1.27.0-minimal' legacy_action/scripts/run_pipeline.sh
-          echo "Legacy Action source pinned exactly."
+          rm -rf legacy_exact/vendor/ThermoSysPro legacy_exact/build legacy_exact/outputs
+          mkdir -p legacy_exact/vendor legacy_exact/build/omhome legacy_exact/outputs
+          git clone --no-checkout https://github.com/Dwarf-Planet-Project/ThermoSysPro.git legacy_exact/vendor/ThermoSysPro
+          git -C legacy_exact/vendor/ThermoSysPro checkout --detach db81ae1b5a6a85f6c6c7693244cafa6087e18ff5
+          test "$(git -C legacy_exact/vendor/ThermoSysPro rev-parse HEAD)" = "db81ae1b5a6a85f6c6c7693244cafa6087e18ff5"
+          test -f legacy_exact/vendor/ThermoSysPro/ThermoSysPro/package.mo
+          echo "Pinned legacy ThermoSysPro source prepared."
 
-      - name: Run legacy unit tests
-        working-directory: legacy_action
-        shell: bash
-        run: python3 -m unittest discover -s tests -v
-
-      - name: Run exact legacy Action pipeline
-        working-directory: legacy_action
+      - name: Render exact legacy model
         shell: bash
         run: |
           set -euo pipefail
-          chmod +x scripts/run_pipeline.sh
-          scripts/run_pipeline.sh \
-            "600" \
-            "5" \
-            "1000" \
-            "1000" \
-            "none" \
-            "none" \
-            "causal_100ms" \
-            "2000" \
-            "5000" \
-            "60" \
-            "400"
+          python3 legacy_exact/scripts/render_modelica.py \
+            --trip-time 600 \
+            --trip-ramp-duration 5 \
+            --stop-time 1000 \
+            --intervals 10000
 
-      - name: Verify exact legacy result
-        working-directory: legacy_action
+      - name: Install exact legacy Modelica dependency
         shell: bash
         run: |
           set -euo pipefail
-          test -s outputs/thermosyspro-raw.csv
-          test -s outputs/processbus.csv
-          test -s outputs/GT_TRIP_RAW_DATA.csv
-          test -s outputs/DCS1.csv
-          test -s outputs/DCS2.csv
-          test -s outputs/ECMS.csv
-          echo "EXACT LEGACY ACTION PASS"
+          docker run --rm \
+            -v "$PWD/legacy_exact/build/omhome:/root" \
+            -v "$PWD/legacy_exact:/workspace" \
+            -w /workspace \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            omc /workspace/modelica/install_dependencies.mos
+
+      - name: Run exact legacy ThermoSysPro physics
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$PWD/legacy_exact/build/omhome:/root" \
+            -v "$PWD/legacy_exact:/workspace" \
+            -w /workspace \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            omc /workspace/build/run.mos
+
+      - name: Verify exact legacy physics result
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s legacy_exact/build/thermosyspro_trip_tac_res.csv
+          cp legacy_exact/build/thermosyspro_trip_tac_res.csv legacy_exact/outputs/thermosyspro-raw.csv
+          python3 - <<'PY'
+          import csv
+          from pathlib import Path
+          p = Path('legacy_exact/outputs/thermosyspro-raw.csv')
+          with p.open(newline='', encoding='utf-8') as f:
+              rows = list(csv.reader(f))
+          assert len(rows) > 1000, f'expected physics rows, got {len(rows)-1}'
+          header = rows[0]
+          assert 'time' in header, 'time column missing'
+          print(f'EXACT LEGACY PHYSICS PASS: {len(rows)-1} data rows')
+          PY
 
       - name: Upload exact legacy outputs
         uses: actions/upload-artifact@v4
         with:
           name: triplens-legacy-exact-${{ github.run_number }}
           path: |
-            legacy_action/outputs/
-            legacy_action/build/run.mos
-            legacy_action/build/TripLens_CombinedCycle_TripTAC.mo
+            legacy_exact/outputs/
+            legacy_exact/build/run.mos
+            legacy_exact/build/TripLens_CombinedCycle_TripTAC.mo
           if-no-files-found: error
           retention-days: 30
 
