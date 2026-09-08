@@ -1,0 +1,54 @@
+name: Windows TripTAC Co-Sim Dashboard
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'matlab/build_triptac_cosim_dashboard.m'
+      - '.github/workflows/windows-triptac-cosim-dashboard.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  windows-cosim-dashboard:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 120
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Download validated TripTAC Co-Simulation FMU
+        uses: actions/download-artifact@v4
+        with:
+          name: triplens-triptac-cosim-fmu-4
+          path: fmu_artifact
+          repository: khaku25/triplens-matlab-cosim-runner
+          run-id: 34199738020
+          github-token: ${{ github.token }}
+
+      - name: Show downloaded FMU payload
+        shell: powershell
+        run: |
+          Get-ChildItem -Recurse fmu_artifact | Select-Object FullName,Length
+          $fmu = Get-ChildItem -Recurse fmu_artifact -Filter TripLens_CombinedCycle_TripTAC_CoSim.fmu | Select-Object -First 1
+          if (-not $fmu) { throw 'Validated TripTAC FMU artifact missing' }
+          Write-Host "FMU=$($fmu.FullName)"
+
+      - name: Build ECMS dashboard and run real Simulink-FMU smoke
+        shell: cmd
+        run: |
+          "C:\Program Files\MATLAB\R2025b\bin\matlab.exe" -batch "addpath(fullfile(getenv('GITHUB_WORKSPACE'),'matlab')); build_triptac_cosim_dashboard"
+
+      - name: Upload co-simulation proof and dashboard model
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: triptac-windows-cosim-dashboard-${{ github.run_number }}
+          path: |
+            outputs/triptac_cosim_dashboard_report.json
+            outputs/TripLens_ECMS_DigitalTwin.slx
+          if-no-files-found: warn
+          retention-days: 30
