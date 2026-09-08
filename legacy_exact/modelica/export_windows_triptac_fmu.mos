@@ -1,5 +1,9 @@
 setCommandLineOptions("--std=3.4");
-loadModel(Modelica, {"3.2.3"});
+loadFile("T:/omlib/libraries/Complex 3.2.3+maint.om/package.mo");
+getErrorString();
+loadFile("T:/omlib/libraries/ModelicaServices 3.2.3+maint.om/package.mo");
+getErrorString();
+loadFile("T:/omlib/libraries/Modelica 3.2.3+maint.om/package.mo");
 getErrorString();
 loadFile("T:/legacy_exact/vendor/ThermoSysPro/ThermoSysPro/package.mo");
 getErrorString();
