@@ -58,9 +58,9 @@ jobs:
           loadFile("/workspace/build/TripLens_CombinedCycle_TripTAC_CoSim.mo");
           getErrorString();
           cd("/workspace/build/cosim");
-          checkModel(TripLens_CombinedCycle_TripTAC_CoSim);
+          checkModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_CombinedCycle_TripTAC_CoSim);
           getErrorString();
-          buildModelFMU(TripLens_CombinedCycle_TripTAC_CoSim, version="2.0", fmuType="cs", fileNamePrefix="TripLens_CombinedCycle_TripTAC_CoSim");
+          buildModelFMU(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_CombinedCycle_TripTAC_CoSim, version="2.0", fmuType="cs", fileNamePrefix="TripLens_CombinedCycle_TripTAC_CoSim");
           getErrorString();
           MOS
 
@@ -81,7 +81,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import zipfile, re
+          import zipfile
           p='legacy_exact/build/cosim/TripLens_CombinedCycle_TripTAC_CoSim.fmu'
           with zipfile.ZipFile(p) as z:
               xml=z.read('modelDescription.xml').decode('utf-8')
