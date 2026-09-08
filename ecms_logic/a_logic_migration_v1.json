@@ -1,8 +1,8 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "2.0",
   "target_model": "TripLens_ECMS_A_Logic_Core",
   "integration_target": "TripLens_ECMS_DigitalTwin/Protection_Control",
-  "tag_master_binding": "PENDING",
+  "tag_master_binding": "ABSOLUTE_LOGIC_MASTER_V2",
   "source_reference": {
     "repository": "khaku25/triplens-thermosyspro-cloud-runner",
     "files": [
@@ -17,9 +17,9 @@
     "GT Trip receive delay",
     "86GT lockout delay and latch",
     "52GT trip command timing and latch",
-    "BUS-A/B 27UV pickup and persistence delay",
+    "BUS-A/B 27UV absolute kV pickup and persistence delay",
     "Bus tie automatic-close permissive only",
-    "ST low-power VPP state indication"
+    "ST low-power absolute MW state indication"
   ],
   "explicitly_not_synthesized": [
     "bus voltage",
@@ -40,5 +40,6 @@
     "motor protection and FWP trip logic",
     "full DCS1/DCS2 alarm rule block generation"
   ],
-  "safety_note": "All inherited protection settings remain PROVISIONAL and are not plant-approved settings. Physical consequences must be supplied by Electrical/Thermo twins, not generated inside this logic core."
+  "safety_note": "Engineering-unit settings are calibrated to the virtual model and remain NOT PLANT APPROVED and are not plant-approved settings. Physical consequences must be supplied by Electrical/Thermo twins, not generated inside this logic core."
 }
+
