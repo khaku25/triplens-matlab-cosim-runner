@@ -51,8 +51,8 @@ jobs:
           cd("/workspace/build/selector_probe");
           checkModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_CombinedCycle_TripTAC_CoSim);
           getErrorString();
-          translateModelFMU(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_CombinedCycle_TripTAC_CoSim,
-            version="2.0", fmuType="cs", fileNamePrefix="TripLens_CombinedCycle_TripTAC_CoSim");
+          buildModelFMU(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_CombinedCycle_TripTAC_CoSim,
+            version="2.0", fmuType="cs", fileNamePrefix="TripLens_CombinedCycle_TripTAC_CoSim", platforms={});
           getErrorString();
           MOS
           docker run --rm \
@@ -68,16 +68,18 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          import hashlib, json, zipfile
+          import hashlib, json, math, zipfile
           import xml.etree.ElementTree as ET
           d=Path('legacy_exact/build/selector_probe')
           p=d/'TripLens_CombinedCycle_TripTAC_CoSim.fmu'
           with zipfile.ZipFile(p) as z:
               r=ET.fromstring(z.read('modelDescription.xml'))
               assert any(n.startswith('sources/') and n.endswith('.c') for n in z.namelist())
+              assert 'sources/omc_simulation_settings.h' in z.namelist()
           assert r.find('CoSimulation') is not None
           inputs={v.get('name'):float(v.find('Real').get('start')) for v in r.find('ModelVariables') if v.get('causality')=='input'}
-          assert inputs=={'gtExhaustFlowCmd':606.94,'gtExhaustTemperatureCmd':893.75}, inputs
+          expected={'gtExhaustFlowCmd':606.94,'gtExhaustTemperatureCmd':893.75}
+          assert set(inputs)==set(expected) and all(math.isclose(inputs[n],value,rel_tol=1e-12) for n,value in expected.items()), inputs
           outputs=[v.get('name') for v in r.find('ModelVariables') if v.get('causality')=='output']
           assert len(outputs)==7 and 'stElectricalPower' in outputs, outputs
           manifest=json.loads((d/'selector_manifest.json').read_text())
