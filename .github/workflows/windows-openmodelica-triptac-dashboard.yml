@@ -1,12 +1,19 @@
 name: Windows OpenModelica TripTAC Dashboard
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'legacy_exact/modelica/export_windows_triptac_fmu.mos'
-      - '.github/workflows/windows-openmodelica-triptac-dashboard.yml'
+  workflow_run:
+    workflows: ["Build TripTAC Co-Sim FMU"]
+    types: [completed]
   workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Successful Build TripTAC Co-Sim FMU run ID
+        required: true
+        default: '34199738020'
+      source_artifact:
+        description: FMU build artifact name
+        required: true
+        default: 'triplens-triptac-cosim-fmu-4'
 
 permissions:
   contents: read
@@ -14,6 +21,7 @@ permissions:
 
 jobs:
   prepare-modelica323:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -63,13 +71,13 @@ jobs:
           name: modelica323-libraries-${{ github.run_number }}
           path: modelica_bundle
 
-      - name: Download validated TripTAC wrapper artifact
+      - name: Download matching validated TripTAC wrapper artifact
         uses: actions/download-artifact@v4
         with:
-          name: triplens-triptac-cosim-fmu-4
+          name: ${{ github.event_name == 'workflow_run' && format('triplens-triptac-cosim-fmu-{0}', github.event.workflow_run.run_number) || inputs.source_artifact }}
           path: validated_artifact
           repository: khaku25/triplens-matlab-cosim-runner
-          run-id: 34199738020
+          run-id: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || inputs.source_run_id }}
           github-token: ${{ github.token }}
 
       - name: Map ASCII workspace
