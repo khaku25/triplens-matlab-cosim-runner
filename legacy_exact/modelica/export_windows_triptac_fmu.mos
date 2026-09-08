@@ -1,13 +1,13 @@
 setCommandLineOptions("--std=3.4");
-loadFile("T:/omlib/libraries/Complex 3.2.3+maint.om/package.mo");
+loadFile("T:/omlib/libraries/Complex 3.2.3+maint.om/package.mo", uses=false);
 getErrorString();
-loadFile("T:/omlib/libraries/ModelicaServices 3.2.3+maint.om/package.mo");
+loadFile("T:/omlib/libraries/ModelicaServices 3.2.3+maint.om/package.mo", uses=false);
 getErrorString();
-loadFile("T:/omlib/libraries/Modelica 3.2.3+maint.om/package.mo");
+loadFile("T:/omlib/libraries/Modelica 3.2.3+maint.om/package.mo", uses=false);
 getErrorString();
-loadFile("T:/legacy_exact/vendor/ThermoSysPro/ThermoSysPro/package.mo");
+loadFile("T:/legacy_exact/vendor/ThermoSysPro/ThermoSysPro/package.mo", uses=false);
 getErrorString();
-loadFile("T:/legacy_exact/build/TripLens_CombinedCycle_TripTAC_CoSim.mo");
+loadFile("T:/legacy_exact/build/TripLens_CombinedCycle_TripTAC_CoSim.mo", uses=false);
 getErrorString();
 cd("T:/legacy_exact/build/winfmu");
 checkModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_CombinedCycle_TripTAC_CoSim);
