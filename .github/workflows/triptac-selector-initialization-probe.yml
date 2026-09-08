@@ -1,0 +1,124 @@
+name: TripTAC Selector Initialization Probe
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ci/build_triptac_selector_probe.py'
+      - 'ci/matlab_selector_fmu_probe.m'
+      - '.github/workflows/triptac-selector-initialization-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: triptac-selector-initialization-probe
+  cancel-in-progress: false
+
+jobs:
+  source-fmu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare exact original and isolated selector
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p legacy_exact/vendor legacy_exact/build/selector_probe/omhome
+          git clone --no-checkout https://github.com/Dwarf-Planet-Project/ThermoSysPro.git legacy_exact/vendor/ThermoSysPro
+          git -C legacy_exact/vendor/ThermoSysPro checkout --detach db81ae1b5a6a85f6c6c7693244cafa6087e18ff5
+          test "$(git -C legacy_exact/vendor/ThermoSysPro rev-parse HEAD)" = db81ae1b5a6a85f6c6c7693244cafa6087e18ff5
+          python3 ci/build_triptac_selector_probe.py
+      - name: Export selector FMU with original tables preserved
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$PWD/legacy_exact/build/selector_probe/omhome:/root" \
+            -v "$PWD/legacy_exact:/workspace" -w /workspace \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            omc /workspace/modelica/install_dependencies.mos
+          cat > legacy_exact/build/selector_probe/export.mos <<'MOS'
+          setCommandLineOptions("--std=3.4");
+          loadModel(Modelica, {"3.2.3"});
+          getErrorString();
+          loadFile("/workspace/vendor/ThermoSysPro/ThermoSysPro/package.mo");
+          getErrorString();
+          loadFile("/workspace/build/selector_probe/TripLens_CombinedCycle_TripTAC_CoSim.mo");
+          getErrorString();
+          cd("/workspace/build/selector_probe");
+          checkModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_CombinedCycle_TripTAC_CoSim);
+          getErrorString();
+          buildModelFMU(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_CombinedCycle_TripTAC_CoSim,
+            version="2.0", fmuType="cs", fileNamePrefix="TripLens_CombinedCycle_TripTAC_CoSim");
+          getErrorString();
+          MOS
+          docker run --rm \
+            -v "$PWD/legacy_exact/build/selector_probe/omhome:/root" \
+            -v "$PWD/legacy_exact:/workspace" -w /workspace \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            omc /workspace/build/selector_probe/export.mos \
+            | tee legacy_exact/build/selector_probe/export.log
+          test -s legacy_exact/build/selector_probe/TripLens_CombinedCycle_TripTAC_CoSim.fmu
+      - name: Verify exact new FMU interface and provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, json, zipfile
+          import xml.etree.ElementTree as ET
+          d=Path('legacy_exact/build/selector_probe')
+          p=d/'TripLens_CombinedCycle_TripTAC_CoSim.fmu'
+          with zipfile.ZipFile(p) as z:
+              r=ET.fromstring(z.read('modelDescription.xml'))
+              assert any(n.startswith('sources/') and n.endswith('.c') for n in z.namelist())
+          assert r.find('CoSimulation') is not None
+          inputs={v.get('name'):float(v.find('Real').get('start')) for v in r.find('ModelVariables') if v.get('causality')=='input'}
+          assert inputs=={'gtExhaustFlowCmd':606.94,'gtExhaustTemperatureCmd':893.75}, inputs
+          outputs=[v.get('name') for v in r.find('ModelVariables') if v.get('causality')=='output']
+          assert len(outputs)==7 and 'stElectricalPower' in outputs, outputs
+          manifest=json.loads((d/'selector_manifest.json').read_text())
+          manifest.update(fmu_sha256=hashlib.sha256(p.read_bytes()).hexdigest(), guid=r.get('guid'), inputs=inputs, outputs=outputs)
+          (d/'selector_manifest.json').write_text(json.dumps(manifest,indent=2))
+          print(json.dumps(manifest,indent=2))
+          print('NEW_SELECTOR_FMU_INTERFACE_PASS')
+          PY
+      - name: Preserve source and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selector-source-fmu-${{ github.run_number }}
+          path: |
+            legacy_exact/build/selector_probe/*.fmu
+            legacy_exact/build/selector_probe/*.mo
+            legacy_exact/build/selector_probe/*.json
+            legacy_exact/build/selector_probe/*.log
+          if-no-files-found: error
+          retention-days: 30
+
+  simulink-probe:
+    needs: source-fmu
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download this run's new selector FMU
+        uses: actions/download-artifact@v4
+        with:
+          name: selector-source-fmu-${{ github.run_number }}
+          path: fmu_artifact
+      - name: Compile new selector sources and execute independent probes
+        shell: cmd
+        run: |
+          "C:\Program Files\MATLAB\R2025b\bin\matlab.exe" -batch "addpath(fullfile(getenv('GITHUB_WORKSPACE'),'ci')); matlab_mingw_fmu_smoke; matlab_selector_fmu_probe"
+      - name: Preserve Windows FMU and Simulink evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selector-simulink-evidence-${{ github.run_number }}
+          path: outputs/
+          if-no-files-found: warn
+          retention-days: 30
