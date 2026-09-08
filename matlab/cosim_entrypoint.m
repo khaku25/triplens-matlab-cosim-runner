@@ -37,6 +37,8 @@ switch mode
 
     case "bfp-cosim"
         report = check_bfp_wrapper_inputs(report);
+        baseline = run_thermosyspro_baseline();
+        report.Baseline = baseline;
         commandFile = string(getenv("TRIPLENS_COMMAND_FILE"));
         if strlength(commandFile)==0
             commandFile = fullfile(repoRoot,"examples","bfp_trip_commands.csv");
