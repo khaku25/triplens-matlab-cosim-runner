@@ -138,10 +138,8 @@ for k=1:numel(loaded)
     end
 end
 models = unique(models);
-assert(numel(models)==1,"TripLens:AmbiguousModel", ...
-    ["Set TRIPLENS_ECMS_MODEL_PATH, place exactly one .slx/.mdl under %s, " ...
-     "or make TRIPLENS_ECMS_INIT_SCRIPT load exactly one model. Found %d files and %d loaded models."], ...
-    folder,numel(matches),numel(models));
+message = "Set TRIPLENS_ECMS_MODEL_PATH, place exactly one .slx/.mdl under %s, or make TRIPLENS_ECMS_INIT_SCRIPT load exactly one model. Found %d files and %d loaded models.";
+assert(numel(models)==1,"TripLens:AmbiguousModel",message,folder,numel(matches),numel(models));
 modelName = models(1);
 modelFile = "<loaded-by-init-script:" + modelName + ">";
 modelDir = "";
