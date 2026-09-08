@@ -35,6 +35,16 @@ switch mode
     case "bfp-wrapper-check"
         report = check_bfp_wrapper_inputs(report);
 
+    case "ecms-inventory"
+        report.ECMS = run_ecms_simulink("InventoryOnly",true);
+        report.Status = "PASS";
+        report.Message = "Local ECMS Simulink model inventory completed without opening the GUI.";
+
+    case "ecms-simulate"
+        report.ECMS = run_ecms_simulink("InventoryOnly",false);
+        report.Status = "PASS";
+        report.Message = "Local ECMS Simulink model executed non-interactively on the self-hosted runner.";
+
     case "bfp-cosim"
         report = check_bfp_wrapper_inputs(report);
         baseline = run_thermosyspro_baseline();

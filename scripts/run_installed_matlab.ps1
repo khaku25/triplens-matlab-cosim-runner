@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory=$true)]
-    [ValidateSet('smoke','bfp-wrapper-check','bfp-cosim')]
+    [ValidateSet('smoke','bfp-wrapper-check','bfp-cosim','ecms-inventory','ecms-simulate')]
     [string]$Mode
 )
 
