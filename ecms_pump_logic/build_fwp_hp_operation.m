@@ -223,9 +223,13 @@ close_system(modelName,0);
 end
 
 function value=settingValue(tbl,name)
-idx=find(tbl.setting_id==string(name),1);
+% Use stable column positions because localized MATLAB installations can
+% normalize imported CSV header names differently even with preserve mode.
+settingIds=string(tbl{:,1});
+settingValues=string(tbl{:,3});
+idx=find(settingIds==string(name),1);
 if isempty(idx), error('TripLens:MissingSetting','Missing setting %s',name); end
-value=str2double(string(tbl.value(idx)));
+value=str2double(settingValues(idx));
 if isnan(value), error('TripLens:BadSetting','Non-numeric setting %s',name); end
 end
 
