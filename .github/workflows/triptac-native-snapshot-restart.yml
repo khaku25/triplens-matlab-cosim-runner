@@ -51,7 +51,7 @@ jobs:
           loadFile("/workspace/vendor/ThermoSysPro/ThermoSysPro/package.mo"); getErrorString();
           loadFile("/workspace/build/TripLens_CombinedCycle_TripTAC.mo"); getErrorString();
           cd("/workspace/build/saved_state_restart");
-          buildModel(TripLens_CombinedCycle_TripTAC,startTime=300,stopTime=301,numberOfIntervals=10,tolerance=1e-3,method="dassl",outputFormat="csv",fileNamePrefix="native_restart",variableFilter="^(time|Alternateur\\.Welec|Ballon(HP|MP|BP)\\.(P|zl)|Debit\\.y\\.signal|Temperature\\.y\\.signal)$");
+          buildModel(TripLens_CombinedCycle_TripTAC,startTime=300,stopTime=1000,numberOfIntervals=7000,tolerance=1e-3,method="dassl",outputFormat="csv",fileNamePrefix="native_restart",variableFilter="^(time|Alternateur\\.Welec|Ballon(HP|MP|BP)\\.(P|zl)|Debit\\.y\\.signal|Temperature\\.y\\.signal)$");
           getErrorString();
           MOS
           docker run --rm -v "$PWD/legacy_exact/build/saved_state_restart/omhome:/root" -v "$PWD/legacy_exact:/workspace" -w /workspace openmodelica/openmodelica:v1.27.0-minimal omc /workspace/build/saved_state_restart/restart.mos > legacy_exact/build/saved_state_restart/build.log 2>&1
@@ -59,7 +59,7 @@ jobs:
           docker run --rm -v "$PWD/legacy_exact:/workspace" -w /workspace/build/saved_state_restart openmodelica/openmodelica:v1.27.0-minimal ./native_restart -iif=/workspace/warm_snapshot/native_full_res.mat -iit=300 -iim=none -noEventEmit -lv=LOG_INIT,LOG_STATS > legacy_exact/build/saved_state_restart/restart.log 2>&1
           tail -40 legacy_exact/build/saved_state_restart/restart.log
           sudo chown -R "$(id -u):$(id -g)" legacy_exact/build/saved_state_restart
-      - name: Require real continuation and agreement with the saved start state
+      - name: Require real continuation, initial-state agreement and boundary response
         shell: bash
         run: |
           python3 - <<'PY'
@@ -67,7 +67,7 @@ jobs:
           import csv,json,math,hashlib,os
           d=Path('legacy_exact/build/saved_state_restart')
           with (d/'native_restart_res.csv').open(newline='') as f: rows=list(csv.DictReader(f))
-          assert len(rows)>=11 and abs(float(rows[0]['time'])-300)<1e-7 and abs(float(rows[-1]['time'])-301)<1e-7
+          assert len(rows)>=7001 and abs(float(rows[0]['time'])-300)<1e-7 and abs(float(rows[-1]['time'])-1000)<1e-7
           ref=json.loads(Path('legacy_exact/warm_snapshot/native_snapshot_300.json').read_text())['values']
           names=['Alternateur.Welec','BallonHP.P','BallonMP.P','BallonBP.P','BallonHP.zl','BallonMP.zl','BallonBP.zl']
           comparison={}
@@ -77,7 +77,10 @@ jobs:
               err=abs(values[0]-ref[n])/max(1,abs(ref[n]))
               assert err<1e-6,(n,err)
               comparison[n]={'saved':ref[n],'restarted_first':values[0],'last':values[-1],'relative_start_error':err}
-          summary={'status':'pass','scope':'native saved-state continuation only, NOT Simulink/FMU validation','source_snapshot_run_id':34220970632,'run_id':os.environ['GITHUB_RUN_ID'],'method':'iif MAT, iit=300, iim=none; physical equations and property assertions intact','start_time_s':300,'stop_time_s':301,'samples':len(rows),'comparison':comparison,'csv_sha256':hashlib.sha256((d/'native_restart_res.csv').read_bytes()).hexdigest()}
+          assert abs(float(rows[-1]['Debit.y.signal'])-150)<1e-8
+          assert abs(float(rows[-1]['Temperature.y.signal'])-550)<1e-8
+          assert abs(float(rows[-1]['Alternateur.Welec'])-ref['Alternateur.Welec'])>0.01*abs(ref['Alternateur.Welec'])
+          summary={'status':'pass','scope':'native saved-state continuation and existing exhaust-boundary reduction only, NOT Simulink/FMU or full GT-trip validation','source_snapshot_run_id':34220970632,'run_id':os.environ['GITHUB_RUN_ID'],'method':'iif MAT, iit=300, iim=none; physical equations and property assertions intact','start_time_s':300,'stop_time_s':1000,'samples':len(rows),'comparison':comparison,'boundary_change_time_s':600,'ramp_s':5,'final_exhaust_flow_kg_s':float(rows[-1]['Debit.y.signal']),'final_exhaust_temperature_K':float(rows[-1]['Temperature.y.signal']),'csv_sha256':hashlib.sha256((d/'native_restart_res.csv').read_bytes()).hexdigest()}
           (d/'restart_summary.json').write_text(json.dumps(summary,indent=2));print(json.dumps(summary,indent=2));print('NATIVE_SAVED_STATE_RESTART_PASS_NOT_FMU_PASS')
           PY
       - name: Make diagnostics readable
