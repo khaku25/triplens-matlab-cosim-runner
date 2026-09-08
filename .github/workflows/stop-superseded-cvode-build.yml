@@ -1,0 +1,24 @@
+name: Stop Superseded CVODE Diagnostic Build
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/stop-superseded-cvode-build.yml']
+  workflow_dispatch:
+permissions:
+  actions: write
+  contents: read
+jobs:
+  stop-specific-run:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Cancel only CVODE run 34230564311, not ECMS or cloud RAW workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          status=$(gh api "repos/$GH_REPO/actions/runs/34230564311" --jq .status)
+          echo "Superseded CVODE run status: $status"
+          if test "$status" != completed; then
+            gh api --method POST "repos/$GH_REPO/actions/runs/34230564311/cancel"
+          fi
