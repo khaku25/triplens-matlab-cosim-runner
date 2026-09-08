@@ -1,0 +1,21 @@
+signal_name,direction,data_type,source_layer,role,status,bound_tag,notes
+gt_trip_cmd,IN,boolean,ECMS_COMMAND,GT Trip episode input,PROVISIONAL_BINDING,,Later bind to Tag Master command tag
+relay_86gt_healthy,IN,boolean,PROTECTION_FEEDBACK,Protection healthy permissive,PROVISIONAL_BINDING,,No synthetic relay health inside logic core
+cb_52gt_reset_cmd,IN,boolean,ECMS_COMMAND,86GT and breaker trip latch reset,PROVISIONAL_BINDING,,Reset policy to be refined with approved C&E
+cb_52gt_closed_fb,IN,boolean,ELECTRICAL_TWIN,52GT position feedback,PROVISIONAL_BINDING,,Reserved for fail-to-open logic after setting validation
+bus_a_voltage_pu,IN,double,ELECTRICAL_TWIN,BUS-A solved voltage input,PROVISIONAL_BINDING,,Must come from electrical physics; never synthesized here
+bus_b_voltage_pu,IN,double,ELECTRICAL_TWIN,BUS-B solved voltage input,PROVISIONAL_BINDING,,Must come from electrical physics; never synthesized here
+bus_a_native_live,IN,boolean,ELECTRICAL_TWIN,BUS-A native source available,PROVISIONAL_BINDING,,Topology/energization feedback
+bus_b_native_live,IN,boolean,ELECTRICAL_TWIN,BUS-B native source available,PROVISIONAL_BINDING,,Topology/energization feedback
+bus_a_fault_active,IN,boolean,ELECTRICAL_TWIN,BUS-A fault active,PROVISIONAL_BINDING,,Fault state comes from electrical twin/scenario source
+bus_b_fault_active,IN,boolean,ELECTRICAL_TWIN,BUS-B fault active,PROVISIONAL_BINDING,,Fault state comes from electrical twin/scenario source
+stg_power_pu,IN,double,THERMO_OR_ELECTRICAL_TWIN,ST normalized active power input,PROVISIONAL_BINDING,,Physical power feedback only
+auto_bus_tie_enable,IN,boolean,ECMS_SETTING,Enable automatic bus tie transfer,PROVISIONAL_BINDING,,Default 0 from A settings
+allow_source_parallel,IN,boolean,ECMS_SETTING,Source parallel permission,PROVISIONAL_BINDING,,Default 0 until synchronism logic exists
+relay_86gt_trip_received,OUT,boolean,PROTECTION_CONTROL,GT trip receive state after delay,MIGRATED_V1,,Mirrors A-program timing logic
+relay_86gt_operated,OUT,boolean,PROTECTION_CONTROL,86GT lockout latch,MIGRATED_V1,,Latched per trip episode; reset input clears output
+cb_52gt_trip_cmd,OUT,boolean,PROTECTION_CONTROL,52GT trip command latch,MIGRATED_V1,,Timing mirrors A-program GT breaker trip schedule
+bus_a_27uv_operate,OUT,boolean,PROTECTION_CONTROL,BUS-A undervoltage operate,MIGRATED_V1,,Driven only by bus_a_voltage_pu input
+bus_b_27uv_operate,OUT,boolean,PROTECTION_CONTROL,BUS-B undervoltage operate,MIGRATED_V1,,Driven only by bus_b_voltage_pu input
+cb_tie_ab_auto_close_permissive,OUT,boolean,PROTECTION_CONTROL,Auto tie close permissive,MIGRATED_V1_DISABLED,,Enable input defaults false; no direct breaker actuation in v1
+stg_low_state,OUT,boolean,PROTECTION_CONTROL,ST low-power VPP state,MIGRATED_V1,,State indication only; no automatic 52ST trip in v1
