@@ -23,6 +23,16 @@ assert(~isempty(dlls),'TripLens:NoWin64DLL','FMU does not contain binaries/win64
 disp("SIMULINK_FMU_DLL=" + string(dlls(1).name));
 rmdir(inspectDir,'s');
 
+% The FMU Import block does not accept an absolute FMUName path. Put the
+% artifact directory on the current MATLAB path and pass only the file name.
+fmuFolder = fileparts(fmu);
+[~,fmuStem,fmuExt] = fileparts(fmu);
+fmuName = [fmuStem fmuExt];
+addpath(fmuFolder);
+pathCleanup = onCleanup(@() rmpath(fmuFolder)); %#ok<NASGU>
+disp("SIMULINK_FMU_PATH_ADDED=" + string(fmuFolder));
+disp("SIMULINK_FMU_NAME=" + string(fmuName));
+
 mdl = 'TripLens_TripTAC_FMU_Smoke';
 if bdIsLoaded(mdl), bdclose(mdl); end
 new_system(mdl);
@@ -34,7 +44,7 @@ add_block('simulink/Sources/Constant',[mdl '/GT_Temperature'], ...
     'Value','893.75','Position',[30 145 100 175]);
 
 add_block('simulink_extras/FMU Import/FMU',[mdl '/Thermo_FMU'], ...
-    'FMUName',fmu,'Position',[190 45 510 285]);
+    'FMUName',fmuName,'Position',[190 45 510 285]);
 set_param([mdl '/Thermo_FMU'],'FMUInputMapping','Flat','FMUOutputMapping','Flat');
 
 ph = get_param([mdl '/Thermo_FMU'],'PortHandles');
