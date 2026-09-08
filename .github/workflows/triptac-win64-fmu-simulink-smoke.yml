@@ -1,0 +1,44 @@
+name: TripTAC Win64 FMU Simulink Smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ci/matlab_win64_fmu_simulink_smoke.m'
+      - '.github/workflows/triptac-win64-fmu-simulink-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  simulink-win64-fmu-smoke:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Download Windows-ready TripTAC FMU
+        uses: actions/download-artifact@v4
+        with:
+          name: triptac-cloud-fmu-win64-mingw-6
+          path: fmu_artifact
+          repository: khaku25/triplens-matlab-cosim-runner
+          run-id: 34212722783
+          github-token: ${{ github.token }}
+
+      - name: Import FMU and run Simulink smoke
+        shell: cmd
+        run: |
+          "C:\Program Files\MATLAB\R2025b\bin\matlab.exe" -batch "addpath(fullfile(getenv('GITHUB_WORKSPACE'),'ci')); matlab_win64_fmu_simulink_smoke"
+
+      - name: Upload Simulink smoke outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: triptac-win64-fmu-simulink-smoke-${{ github.run_number }}
+          path: outputs/
+          if-no-files-found: warn
+          retention-days: 30
