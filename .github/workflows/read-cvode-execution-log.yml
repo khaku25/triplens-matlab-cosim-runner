@@ -1,0 +1,29 @@
+name: Read Completed CVODE Execution Log
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/read-cvode-execution-log.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  collect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Read only the completed desktop CVODE test log
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          mkdir -p evidence
+          gh api "repos/$GH_REPO/actions/jobs/102079390010/logs" > evidence/desktop-cvode-job-102079390010.log
+          tail -100 evidence/desktop-cvode-job-102079390010.log > evidence/tail.txt
+          grep -n -E 'Error|error|ERROR|Crash|crash|SELECTOR|CVODE|Exit Status' evidence/desktop-cvode-job-102079390010.log | tail -60 > evidence/key-lines.txt || true
+          cat evidence/key-lines.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cvode-desktop-log-evidence
+          path: evidence/
+          retention-days: 30
