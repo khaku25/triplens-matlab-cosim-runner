@@ -1,0 +1,125 @@
+name: TripTAC CVODE Warm Start Probe
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ci/cvode/**'
+      - '.github/workflows/triptac-cvode-warm-start.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: triptac-cvode-warm-start
+  cancel-in-progress: false
+
+jobs:
+  build-cvode:
+    name: build-cvode-${{ matrix.platform }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [linux64, win64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Download the exact initializing native-seeded source
+        uses: actions/download-artifact@v4
+        with:
+          name: native-seeded-source-1
+          run-id: 34226155354
+          github-token: ${{ github.token }}
+          path: seed_source
+      - name: Install Windows cross-compiler only in cloud
+        if: matrix.platform == 'win64'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix
+      - name: Build pinned SUNDIALS and actual CVODE FMU
+        run: |
+          python3 -m py_compile ci/cvode/*.py
+          python3 ci/cvode/build_cvode_fmu.py \
+            --seed-fmu seed_source/TripLens_CombinedCycle_TripTAC_CoSim.fmu \
+            --work cvode_work --out cvode_build \
+            --platform '${{ matrix.platform }}'
+      - name: Preserve build outputs and failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cvode-build-${{ matrix.platform }}-${{ github.run_number }}
+          path: cvode_build/
+          if-no-files-found: warn
+          retention-days: 30
+
+  linux-cvode-execution:
+    needs: build-cvode
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      TRIPLENS_USE_NATIVE_SEED: '1'
+      TRIPLENS_RETAIN_VALIDATED_NLS_GUESS: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: cvode-build-linux64-${{ github.run_number }}
+          path: cvode_build
+      - name: Install independent FMI importer
+        run: python3 -m pip install 'fmpy==0.3.22'
+      - name: Actual 2-second baseline and two independent input-response tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p cvode_results
+          for case in baseline flow_step temperature_step; do
+            python3 ci/cvode/probe_cvode_fmu.py \
+              --fmu cvode_build/TripLens_CombinedCycle_TripTAC_CoSim_linux64.fmu \
+              --case "$case" --out cvode_results --stop 2 --step 0.01 \
+              2>&1 | tee "cvode_results/${case}.log"
+            grep -q 'TRIPLENS_FMI_INTERNAL_SOLVER=cvode' "cvode_results/${case}.log"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cvode-linux-execution-${{ github.run_number }}
+          path: cvode_results/
+          if-no-files-found: warn
+          retention-days: 30
+
+  installed-simulink-cvode:
+    needs: build-cvode
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 20
+    env:
+      TRIPLENS_USE_NATIVE_SEED: '1'
+      TRIPLENS_RETAIN_VALIDATED_NLS_GUESS: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: cvode-checkout
+          persist-credentials: false
+      - name: Download this run's Windows CVODE FMU, not an old Euler DLL
+        uses: actions/download-artifact@v4
+        with:
+          name: cvode-build-win64-${{ github.run_number }}
+          path: cvode-checkout/outputs
+      - name: Installed MATLAB actual Simulink baseline and input-response tests
+        shell: cmd
+        run: |
+          "C:\Program Files\MATLAB\R2025b\bin\matlab.exe" -batch "setenv('GITHUB_WORKSPACE',fullfile(getenv('GITHUB_WORKSPACE'),'cvode-checkout')); cd(getenv('GITHUB_WORKSPACE')); addpath(fullfile(pwd,'ci')); matlab_selector_fmu_probe"
+      - name: Preserve actual Simulink model, traces, and errors
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cvode-simulink-execution-${{ github.run_number }}
+          path: cvode-checkout/outputs/
+          if-no-files-found: warn
+          retention-days: 30
