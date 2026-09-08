@@ -43,9 +43,12 @@ jobs:
           if exist legacy_exact\vendor\ThermoSysPro rmdir /s /q legacy_exact\vendor\ThermoSysPro
           if exist legacy_exact\build\winfmu rmdir /s /q legacy_exact\build\winfmu
           if exist fmu_artifact rmdir /s /q fmu_artifact
+          if exist omhome rmdir /s /q omhome
           mkdir legacy_exact\vendor 2>nul
           mkdir legacy_exact\build\winfmu 2>nul
           mkdir fmu_artifact\cosim 2>nul
+          mkdir omhome\AppData\Roaming\.openmodelica\libraries 2>nul
+          mkdir omhome\AppData\Local 2>nul
           "C:\Program Files\Git\cmd\git.exe" clone --no-checkout https://github.com/Dwarf-Planet-Project/ThermoSysPro.git legacy_exact\vendor\ThermoSysPro
           if errorlevel 1 exit /b 1
           "C:\Program Files\Git\cmd\git.exe" -C legacy_exact\vendor\ThermoSysPro checkout --detach db81ae1b5a6a85f6c6c7693244cafa6087e18ff5
@@ -54,17 +57,29 @@ jobs:
           copy /Y validated_artifact\TripLens_CombinedCycle_TripTAC_CoSim.mo legacy_exact\build\TripLens_CombinedCycle_TripTAC_CoSim.mo
           if not exist legacy_exact\build\TripLens_CombinedCycle_TripTAC_CoSim.mo exit /b 1
 
-      - name: Install exact Modelica dependency with local OpenModelica
+      - name: Install exact Modelica dependency in ASCII OpenModelica home
         shell: cmd
         run: |
-          "C:\Program Files\OpenModelica1.28.0-dev-64bit\bin\omc.exe" T:\legacy_exact\modelica\install_dependencies.mos
-          if errorlevel 1 exit /b 1
+          set "APPDATA=T:\omhome\AppData\Roaming"
+          set "LOCALAPPDATA=T:\omhome\AppData\Local"
+          set "USERPROFILE=T:\omhome"
+          set "HOME=T:\omhome"
+          set "OPENMODELICALIBRARY=T:\omhome\AppData\Roaming\.openmodelica\libraries"
+          "C:\Program Files\OpenModelica1.28.0-dev-64bit\bin\omc.exe" T:\legacy_exact\modelica\install_dependencies.mos > T:\legacy_exact\build\winfmu\install_modelica.log 2>&1
+          type T:\legacy_exact\build\winfmu\install_modelica.log
+          dir /s /b "T:\omhome\AppData\Roaming\.openmodelica\libraries\Modelica*\package.mo" >nul || exit /b 1
 
       - name: Build FMI 2.0 Co-Simulation FMU with Windows OpenModelica
         shell: cmd
         run: |
+          set "APPDATA=T:\omhome\AppData\Roaming"
+          set "LOCALAPPDATA=T:\omhome\AppData\Local"
+          set "USERPROFILE=T:\omhome"
+          set "HOME=T:\omhome"
+          set "OPENMODELICALIBRARY=T:\omhome\AppData\Roaming\.openmodelica\libraries"
           "C:\Program Files\OpenModelica1.28.0-dev-64bit\bin\omc.exe" T:\legacy_exact\modelica\export_windows_triptac_fmu.mos > T:\legacy_exact\build\winfmu\export_windows_fmu.log 2>&1
           type T:\legacy_exact\build\winfmu\export_windows_fmu.log
+          findstr /c:"Check of ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_CombinedCycle_TripTAC_CoSim completed successfully" T:\legacy_exact\build\winfmu\export_windows_fmu.log >nul || exit /b 1
           if not exist T:\legacy_exact\build\winfmu\TripLens_CombinedCycle_TripTAC_CoSim.fmu exit /b 1
           copy /Y T:\legacy_exact\build\winfmu\TripLens_CombinedCycle_TripTAC_CoSim.fmu T:\fmu_artifact\cosim\TripLens_CombinedCycle_TripTAC_CoSim.fmu
 
@@ -85,6 +100,7 @@ jobs:
         with:
           name: triptac-windows-openmodelica-dashboard-${{ github.run_number }}
           path: |
+            legacy_exact/build/winfmu/install_modelica.log
             legacy_exact/build/winfmu/export_windows_fmu.log
             fmu_artifact/cosim/TripLens_CombinedCycle_TripTAC_CoSim.fmu
             outputs/triptac_cosim_dashboard_report.json
