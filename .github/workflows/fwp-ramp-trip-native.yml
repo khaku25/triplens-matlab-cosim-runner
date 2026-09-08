@@ -35,14 +35,10 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import re, json
-
           src = Path('fwp_test/vendor/ThermoSysPro/ThermoSysPro/Examples/CombinedCyclePowerPlant/CombinedCycle_TripTAC.mo')
           txt = src.read_text(encoding='utf-8')
-          original = txt
-
           txt = txt.replace('model CombinedCycle_TripTAC\n', 'model TripLens_FWP_RampTrip\n', 1)
           txt = txt.replace('end CombinedCycle_TripTAC;', 'end TripLens_FWP_RampTrip;', 1)
-
           pattern = re.compile(
               r'ThermoSysPro\.InstrumentationAndControl\.Blocks\.Sources\.Rampe\s+arretPomesHP\(\s*'
               r'Initialvalue=1400,\s*Starttime=4000,\s*Duration=1000,\s*Finalvalue=700\)'
@@ -54,12 +50,9 @@ jobs:
           txt, n = pattern.subn(replacement, txt, count=1)
           if n != 1:
               raise SystemExit(f'Expected exactly one HP FWP drive source replacement, got {n}')
-
           if 'connect(PompeAlimHP.rpm_or_mpower, arretPomesHP.y)' not in txt:
               raise SystemExit('HP FWP drive connection not found after patch')
-
-          out = Path('fwp_test/build/TripLens_FWP_RampTrip.mo')
-          out.write_text(txt, encoding='utf-8')
+          Path('fwp_test/build/TripLens_FWP_RampTrip.mo').write_text(txt, encoding='utf-8')
           Path('fwp_test/results/experiment_contract.json').write_text(json.dumps({
               'physics_base': 'ThermoSysPro.Examples.CombinedCyclePowerPlant.CombinedCycle_TripTAC',
               'thermosyspro_commit': 'db81ae1b5a6a85f6c6c7693244cafa6087e18ff5',
@@ -100,9 +93,9 @@ jobs:
           loadFile("/workspace/build/TripLens_FWP_RampTrip.mo");
           getErrorString();
           cd("/workspace/results");
-          checkModel(TripLens_FWP_RampTrip);
+          checkModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_RampTrip);
           getErrorString();
-          simulate(TripLens_FWP_RampTrip, startTime=0, stopTime=30, numberOfIntervals=300, tolerance=1e-3, method="dassl", outputFormat="csv", simflags="-noEventEmit");
+          simulate(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_RampTrip, startTime=0, stopTime=30, numberOfIntervals=300, tolerance=1e-3, method="dassl", outputFormat="csv", fileNamePrefix="TripLens_FWP_RampTrip", simflags="-noEventEmit");
           getErrorString();
           MOS
           docker run --rm \
@@ -120,83 +113,46 @@ jobs:
           python3 - <<'PY'
           import csv, json, math
           from pathlib import Path
-
           p = Path('fwp_test/results/TripLens_FWP_RampTrip_res.csv')
           with p.open(newline='', encoding='utf-8-sig') as f:
-              r = csv.reader(f)
-              header = next(r)
-              rows = [row for row in r]
-
-          if not rows:
-              raise SystemExit('No result rows')
+              r = csv.reader(f); header = next(r); rows = list(r)
+          if not rows: raise SystemExit('No result rows')
           times = [float(row[0]) for row in rows]
           if abs(times[0]) > 1e-9 or times[-1] < 29.99:
               raise SystemExit(f'Incomplete simulation time range: {times[0]}..{times[-1]}')
-
-          keys = [
-              'PompeAlimHP.rpm', 'PompeAlimHP.Q', 'PompeAlimHP.Qv', 'PompeAlimHP.Pm',
-              'PompeAlimHP.C1.P', 'PompeAlimHP.C2.P',
-              'BallonHP.zl', 'BallonHP.P', 'CapteurDebitEauHP.Q',
-              'Alternateur'
-          ]
           interesting = []
           for i,name in enumerate(header):
-              if any(k == name or (k == 'Alternateur' and 'Alternateur' in name) for k in keys):
+              if ('PompeAlimHP' in name or 'BallonHP' in name or 'CapteurDebitEauHP' in name or 'Alternateur' in name):
                   interesting.append((i,name))
-
-          # Add all HP pump variables if exact names differ in generated CSV.
-          for i,name in enumerate(header):
-              if ('PompeAlimHP' in name or 'BallonHP' in name or 'CapteurDebitEauHP' in name) and (i,name) not in interesting:
-                  interesting.append((i,name))
-          interesting = sorted(interesting)[:120]
-
-          def nearest(t):
-              j = min(range(len(times)), key=lambda k: abs(times[k]-t))
-              return j
-
+          interesting = sorted(interesting)[:160]
+          def nearest(t): return min(range(len(times)), key=lambda k: abs(times[k]-t))
           sample_times = [0,5,10,14.9,15.1,20,30]
-          snapshots = {}
-          finite = True
+          snapshots = {}; finite = True
           for t in sample_times:
-              j = nearest(t)
-              snap = {'actual_time_s': times[j]}
+              j=nearest(t); snap={'actual_time_s':times[j]}
               for i,name in interesting:
                   try:
-                      v = float(rows[j][i])
-                      if not math.isfinite(v): finite = False
-                      snap[name] = v
-                  except Exception:
-                      pass
+                      v=float(rows[j][i]); finite = finite and math.isfinite(v); snap[name]=v
+                  except Exception: pass
               snapshots[str(t)] = snap
-
-          # Explicitly verify commanded pump speed trajectory if rpm is present.
           rpm_col = next((i for i,n in enumerate(header) if n == 'PompeAlimHP.rpm'), None)
           rpm_check = None
           if rpm_col is not None:
-              vals = {t: float(rows[nearest(t)][rpm_col]) for t in [5,10,14.9,15.1,20,30]}
-              rpm_check = vals
-              if not (vals[10] > vals[5] * 1.05):
-                  raise SystemExit(f'Pump speed did not rise materially: {vals}')
-              if not (abs(vals[20]) < max(5.0, abs(vals[10])*0.05)):
-                  raise SystemExit(f'Pump speed did not collapse after trip: {vals}')
-
-          if not finite:
-              raise SystemExit('Non-finite value found in sampled physical outputs')
-
-          report = {
-              'status': 'pass',
-              'simulation_start_s': times[0],
-              'simulation_end_s': times[-1],
-              'samples': len(rows),
-              'interesting_variable_count': len(interesting),
-              'interesting_variables': [n for _,n in interesting],
-              'rpm_check': rpm_check,
-              'snapshots': snapshots,
-              'interpretation_guardrail': 'This is a native process-side FWP drive-loss experiment, not yet an ECMS breaker/relay initiated electrical trip.'
+              vals={str(t):float(rows[nearest(t)][rpm_col]) for t in [5,10,14.9,15.1,20,30]}
+              rpm_check=vals
+              if not (vals['10'] > vals['5']*1.05): raise SystemExit(f'Pump speed did not rise materially: {vals}')
+              if not (abs(vals['20']) < max(5.0,abs(vals['10'])*0.05)): raise SystemExit(f'Pump speed did not collapse after trip: {vals}')
+          if not finite: raise SystemExit('Non-finite value found in sampled physical outputs')
+          report={
+              'status':'pass','simulation_start_s':times[0],'simulation_end_s':times[-1],
+              'samples':len(rows),'interesting_variable_count':len(interesting),
+              'interesting_variables':[n for _,n in interesting],'rpm_check':rpm_check,
+              'snapshots':snapshots,
+              'interpretation_guardrail':'Native process-side FWP drive-loss experiment; not yet ECMS breaker/relay initiated electrical trip.'
           }
-          Path('fwp_test/results/fwp_ramp_trip_report.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
+          Path('fwp_test/results/fwp_ramp_trip_report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
           print('FWP_RAMP_TRIP_NATIVE_PHYSICS_PASS')
-          print(json.dumps({'rpm_check': rpm_check, 'interesting_variables': report['interesting_variables'][:25]}, indent=2))
+          print(json.dumps({'rpm_check':rpm_check,'interesting_variables':report['interesting_variables'][:30]},indent=2))
           PY
 
       - name: Upload FWP experiment evidence
