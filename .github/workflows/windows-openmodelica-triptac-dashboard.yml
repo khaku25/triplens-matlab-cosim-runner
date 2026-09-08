@@ -32,11 +32,12 @@ jobs:
             -w /workspace \
             openmodelica/openmodelica:v1.27.0-minimal \
             omc /workspace/modelica/install_dependencies.mos | tee legacy_exact/build/msl/install.log
-          echo '--- installed library tree ---'
-          find legacy_exact/build/msl/omhome/.openmodelica -maxdepth 3 -print | head -200
-          test -d legacy_exact/build/msl/omhome/.openmodelica/libraries
-          tar -chzf modelica323_bundle.tar.gz \
-            -C legacy_exact/build/msl/omhome/.openmodelica libraries
+          docker run --rm \
+            -v "$PWD/legacy_exact/build/msl/omhome:/root" \
+            -v "$PWD:/repo" \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            sh -c 'test -d /root/.openmodelica/libraries && tar -chzf /repo/modelica323_bundle.tar.gz -C /root/.openmodelica libraries && chmod 644 /repo/modelica323_bundle.tar.gz'
+          test -s modelica323_bundle.tar.gz
           tar -tzf modelica323_bundle.tar.gz | grep -E 'libraries/(Modelica|Complex|ModelicaServices).*package.mo' | head -20
           echo 'MODELICA 3.2.3 OFFLINE ARCHIVE PASS'
 
