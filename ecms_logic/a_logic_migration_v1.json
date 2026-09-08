@@ -1,0 +1,44 @@
+{
+  "schema_version": "1.0",
+  "target_model": "TripLens_ECMS_A_Logic_Core",
+  "integration_target": "TripLens_ECMS_DigitalTwin/Protection_Control",
+  "tag_master_binding": "PENDING",
+  "source_reference": {
+    "repository": "khaku25/triplens-thermosyspro-cloud-runner",
+    "files": [
+      "scripts/generate_ecms.py",
+      "scripts/generate_dcs_alarms.py",
+      "config/ecms_a_settings.csv",
+      "config/ecms_command_catalog.csv",
+      "config/dcs_alarm_rules.csv"
+    ]
+  },
+  "migrated_v1": [
+    "GT Trip receive delay",
+    "86GT lockout delay and latch",
+    "52GT trip command timing and latch",
+    "BUS-A/B 27UV pickup and persistence delay",
+    "Bus tie automatic-close permissive only",
+    "ST low-power VPP state indication"
+  ],
+  "explicitly_not_synthesized": [
+    "bus voltage",
+    "generator current",
+    "frequency",
+    "breaker physical position",
+    "source energization",
+    "ST active power",
+    "relay pickup from solved V/I"
+  ],
+  "deferred_until_tag_master_or_physics": [
+    "50/51 overcurrent pickup from solved current",
+    "52GT fail-to-open timer and approved criterion",
+    "synchronism check for breaker close",
+    "approved reset permissives",
+    "actual automatic BUS TIE close command",
+    "automatic 52ST trip/open logic",
+    "motor protection and FWP trip logic",
+    "full DCS1/DCS2 alarm rule block generation"
+  ],
+  "safety_note": "All inherited protection settings remain PROVISIONAL and are not plant-approved settings. Physical consequences must be supplied by Electrical/Thermo twins, not generated inside this logic core."
+}
