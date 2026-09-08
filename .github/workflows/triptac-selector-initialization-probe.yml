@@ -1,5 +1,4 @@
 name: TripTAC Selector Initialization Probe
-
 on:
   push:
     branches: [main]
@@ -9,14 +8,11 @@ on:
       - 'ci/matlab_selector_fmu_probe.m'
       - '.github/workflows/triptac-selector-initialization-probe.yml'
   workflow_dispatch:
-
 permissions:
   contents: read
-
 concurrency:
   group: triptac-selector-initialization-probe
   cancel-in-progress: true
-
 jobs:
   source-fmu:
     runs-on: ubuntu-24.04
@@ -32,15 +28,11 @@ jobs:
           git -C legacy_exact/vendor/ThermoSysPro checkout --detach db81ae1b5a6a85f6c6c7693244cafa6087e18ff5
           test "$(git -C legacy_exact/vendor/ThermoSysPro rev-parse HEAD)" = db81ae1b5a6a85f6c6c7693244cafa6087e18ff5
           python3 ci/build_triptac_selector_probe.py
-      - name: Translate selector source FMU without native Linux compilation
+      - name: Generate complete selector FMU sources
         shell: bash
         run: |
           set -euo pipefail
-          docker run --rm \
-            -v "$PWD/legacy_exact/build/selector_probe/omhome:/root" \
-            -v "$PWD/legacy_exact:/workspace" -w /workspace \
-            openmodelica/openmodelica:v1.27.0-minimal \
-            omc /workspace/modelica/install_dependencies.mos
+          docker run --rm -v "$PWD/legacy_exact/build/selector_probe/omhome:/root" -v "$PWD/legacy_exact:/workspace" -w /workspace openmodelica/openmodelica:v1.27.0-minimal omc /workspace/modelica/install_dependencies.mos
           cat > legacy_exact/build/selector_probe/export.mos <<'MOS'
           setCommandLineOptions("--std=3.4");
           loadModel(Modelica, {"3.2.3"});
@@ -50,24 +42,16 @@ jobs:
           loadFile("/workspace/build/selector_probe/TripLens_CombinedCycle_TripTAC_CoSim.mo");
           getErrorString();
           cd("/workspace/build/selector_probe");
-          translateModelFMU(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_CombinedCycle_TripTAC_CoSim,
-            version="2.0", fmuType="cs", fileNamePrefix="TripLens_CombinedCycle_TripTAC_CoSim");
+          buildModelFMU(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_CombinedCycle_TripTAC_CoSim,
+            version="2.0", fmuType="cs", fileNamePrefix="TripLens_CombinedCycle_TripTAC_CoSim", platforms={""});
           getErrorString();
           MOS
-          docker run --rm \
-            -v "$PWD/legacy_exact/build/selector_probe/omhome:/root" \
-            -v "$PWD/legacy_exact:/workspace" -w /workspace \
-            openmodelica/openmodelica:v1.27.0-minimal \
-            omc /workspace/build/selector_probe/export.mos \
-            > legacy_exact/build/selector_probe/export.log 2>&1
-          tail -35 legacy_exact/build/selector_probe/export.log
-          docker run --rm \
-            -v "$PWD/legacy_exact:/workspace" -w /workspace/build/selector_probe \
-            openmodelica/openmodelica:v1.27.0-minimal \
-            sh -c 'cat TripLens_CombinedCycle_TripTAC_CoSim_FMU.makefile; make -f TripLens_CombinedCycle_TripTAC_CoSim_FMU.makefile fmu' \
-            > legacy_exact/build/selector_probe/source_prepare.log 2>&1
+          docker run --rm -v "$PWD/legacy_exact/build/selector_probe/omhome:/root" -v "$PWD/legacy_exact:/workspace" -w /workspace openmodelica/openmodelica:v1.27.0-minimal omc /workspace/build/selector_probe/export.mos > legacy_exact/build/selector_probe/export.log 2>&1
           sudo chown -R "$(id -u):$(id -g)" legacy_exact/build/selector_probe
-          cat legacy_exact/build/selector_probe/source_prepare.log
+          for f in legacy_exact/build/selector_probe/*FMU.log; do
+            if test -f "$f"; then echo "--- $f ---"; tail -80 "$f"; fi
+          done
+          find legacy_exact/build/selector_probe -maxdepth 3 -type d
           python3 ci/package_selector_source_fmu.py
       - name: Verify new FMU interface and provenance
         shell: bash
@@ -100,8 +84,7 @@ jobs:
         shell: bash
         run: |
           sudo chown -R "$(id -u):$(id -g)" legacy_exact/build/selector_probe
-          find legacy_exact/build/selector_probe -maxdepth 2 -type f | head -80 || true
-          for f in legacy_exact/build/selector_probe/*FMU.log legacy_exact/build/selector_probe/source_prepare.log; do
+          for f in legacy_exact/build/selector_probe/*FMU.log; do
             if test -f "$f"; then echo "--- $f ---"; tail -80 "$f"; fi
           done
       - name: Preserve source and diagnostics
@@ -116,7 +99,6 @@ jobs:
             legacy_exact/build/selector_probe/*.log
           if-no-files-found: error
           retention-days: 30
-
   simulink-probe:
     needs: source-fmu
     runs-on: [self-hosted, Windows, X64]
