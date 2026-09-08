@@ -1,0 +1,32 @@
+name: MATLAB FMU Toolchain Check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/matlab-fmu-toolchain-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-matlab-c-toolchain:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Inspect MATLAB C compiler configuration
+        shell: cmd
+        run: |
+          "C:\Program Files\MATLAB\R2025b\bin\matlab.exe" -batch "disp(version); disp('--- INSTALLED C COMPILERS ---'); c=mex.getCompilerConfigurations('C','Installed'); disp(c); disp('--- SELECTED C COMPILER ---'); s=mex.getCompilerConfigurations('C','Selected'); disp(s); disp('--- ADDONS ---'); try, a=matlab.addons.installedAddons; disp(a(contains(lower(string(a.Name)),'mingw') | contains(lower(string(a.Name)),'compiler'),:)); catch ME, disp(ME.message); end"
+
+      - name: Inspect command-line compiler tools
+        shell: cmd
+        run: |
+          where cl 2>nul || echo CL_NOT_FOUND
+          where gcc 2>nul || echo GCC_NOT_FOUND
+          where g++ 2>nul || echo GXX_NOT_FOUND
+          where mingw32-make 2>nul || echo MINGW_MAKE_NOT_FOUND
