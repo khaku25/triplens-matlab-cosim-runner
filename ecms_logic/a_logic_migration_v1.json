@@ -3,6 +3,11 @@
   "target_model": "TripLens_ECMS_A_Logic_Core",
   "integration_target": "TripLens_ECMS_DigitalTwin/Protection_Control",
   "tag_master_binding": "ABSOLUTE_LOGIC_MASTER_V2",
+  "logic_hierarchy": [
+    "GT_Trip_Protection",
+    "Bus_Protection_Transfer",
+    "ST_State_Monitor"
+  ],
   "source_reference": {
     "repository": "khaku25/triplens-thermosyspro-cloud-runner",
     "files": [
@@ -42,4 +47,3 @@
   ],
   "safety_note": "Engineering-unit settings are calibrated to the virtual model and remain NOT PLANT APPROVED and are not plant-approved settings. Physical consequences must be supplied by Electrical/Thermo twins, not generated inside this logic core."
 }
-
