@@ -67,19 +67,19 @@ outputs = {'relay_86gt_trip_received','relay_86gt_operated', ...
 
 ref = [target '/A_Logic_Core'];
 add_block('built-in/ModelReference',ref,'ModelName',coreName, ...
-    'Position',[390 80 560 530]);
+    'Position',[470 80 680 735]);
 for k=1:numel(inputs)
-    y=35+(k-1)*38;
+    y=35+(k-1)*55;
     p=[target '/' inputs{k}];
     add_block('simulink/Sources/In1',p,'Port',num2str(k), ...
-        'Position',[25 y 180 y+20]);
+        'Position',[25 y 205 y+22]);
     add_line(target,[inputs{k} '/1'],['A_Logic_Core/' num2str(k)],'autorouting','on');
 end
 for k=1:numel(outputs)
-    y=75+(k-1)*68;
+    y=70+(k-1)*105;
     p=[target '/' outputs{k}];
     add_block('simulink/Sinks/Out1',p,'Port',num2str(k), ...
-        'Position',[760 y 970 y+20]);
+        'Position',[940 y 1170 y+22]);
     add_line(target,['A_Logic_Core/' num2str(k)],[outputs{k} '/1'],'autorouting','on');
 end
 
