@@ -31,3 +31,30 @@ Set these environment variables on the runner PC or pass them when testing local
 - `TRIPLENS_OPENMODELICA_HOME`: optional OpenModelica install root; the scripts also search common Windows locations.
 
 No files in the existing cloud-runner repository are required to be modified.
+
+
+## ECMS/VVP Simulink automation
+
+The existing Windows self-hosted runner can inspect and run a local ECMS/VVP
+Simulink model without opening the MATLAB desktop.
+
+Available workflow modes:
+
+- `ecms-inventory`: load the model, record solver settings, block count, and
+  root Inport/Outport names, then upload `outputs/ecms_inventory.json`.
+- `ecms-simulate`: run the model with `sim`, then upload the simulation
+  report and `outputs/ecms_simulation_output.mat`.
+
+The model does not need to be committed. Configure the repository Actions
+variable `TRIPLENS_ECMS_MODEL_PATH` with the absolute path to the local
+`.slx` or `.mdl` file on the runner PC. Optionally set:
+
+- `TRIPLENS_ECMS_INIT_SCRIPT`: absolute path to a MATLAB initialization script.
+- `TRIPLENS_ECMS_STOP_TIME`: positive simulation stop time in seconds.
+
+Workflow-dispatch inputs override those repository variables for one run. After
+changing Windows user environment variables, restart the existing runner so the
+runner process inherits them.
+
+This automation is only for the isolated ECMS/VVP simulation model. Do not point
+it at a live plant ECMS, operational network, or company production system.
