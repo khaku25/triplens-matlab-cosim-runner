@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'ci/matlab_mingw_fmu_smoke.m'
+      - 'ci/triplens_fmu_custom_build.m'
       - '.github/workflows/matlab-mingw-fmu-smoke.yml'
   workflow_dispatch:
 
