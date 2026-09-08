@@ -47,7 +47,10 @@ Available workflow modes:
 
 The model does not need to be committed. Configure the repository Actions
 variable `TRIPLENS_ECMS_MODEL_PATH` with the absolute path to the local
-`.slx` or `.mdl` file on the runner PC. Optionally set:
+`.slx` or `.mdl` file on the runner PC. If the existing MATLAB entry script
+loads or creates exactly one Simulink model, `TRIPLENS_ECMS_MODEL_PATH` may
+be omitted and `TRIPLENS_ECMS_INIT_SCRIPT` can point to that entry script.
+Optionally set:
 
 - `TRIPLENS_ECMS_INIT_SCRIPT`: absolute path to a MATLAB initialization script.
 - `TRIPLENS_ECMS_STOP_TIME`: positive simulation stop time in seconds.
