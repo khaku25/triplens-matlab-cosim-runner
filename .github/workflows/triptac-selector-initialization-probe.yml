@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'ci/build_triptac_selector_probe.py'
+      - 'ci/package_selector_source_fmu.py'
       - 'ci/matlab_selector_fmu_probe.m'
       - '.github/workflows/triptac-selector-initialization-probe.yml'
   workflow_dispatch:
@@ -31,7 +32,7 @@ jobs:
           git -C legacy_exact/vendor/ThermoSysPro checkout --detach db81ae1b5a6a85f6c6c7693244cafa6087e18ff5
           test "$(git -C legacy_exact/vendor/ThermoSysPro rev-parse HEAD)" = db81ae1b5a6a85f6c6c7693244cafa6087e18ff5
           python3 ci/build_triptac_selector_probe.py
-      - name: Export source-only selector FMU with original tables preserved
+      - name: Translate selector source FMU without native Linux compilation
         shell: bash
         run: |
           set -euo pipefail
@@ -49,10 +50,8 @@ jobs:
           loadFile("/workspace/build/selector_probe/TripLens_CombinedCycle_TripTAC_CoSim.mo");
           getErrorString();
           cd("/workspace/build/selector_probe");
-          checkModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_CombinedCycle_TripTAC_CoSim);
-          getErrorString();
-          buildModelFMU(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_CombinedCycle_TripTAC_CoSim,
-            version="2.0", fmuType="cs", fileNamePrefix="TripLens_CombinedCycle_TripTAC_CoSim", platforms={""});
+          translateModelFMU(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_CombinedCycle_TripTAC_CoSim,
+            version="2.0", fmuType="cs", fileNamePrefix="TripLens_CombinedCycle_TripTAC_CoSim");
           getErrorString();
           MOS
           docker run --rm \
@@ -60,9 +59,17 @@ jobs:
             -v "$PWD/legacy_exact:/workspace" -w /workspace \
             openmodelica/openmodelica:v1.27.0-minimal \
             omc /workspace/build/selector_probe/export.mos \
-            | tee legacy_exact/build/selector_probe/export.log
-          test -s legacy_exact/build/selector_probe/TripLens_CombinedCycle_TripTAC_CoSim.fmu
-      - name: Verify exact new FMU interface and provenance
+            > legacy_exact/build/selector_probe/export.log 2>&1
+          tail -35 legacy_exact/build/selector_probe/export.log
+          docker run --rm \
+            -v "$PWD/legacy_exact:/workspace" -w /workspace/build/selector_probe \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            sh -c 'cat TripLens_CombinedCycle_TripTAC_CoSim_FMU.makefile; make -f TripLens_CombinedCycle_TripTAC_CoSim_FMU.makefile fmu' \
+            > legacy_exact/build/selector_probe/source_prepare.log 2>&1
+          sudo chown -R "$(id -u):$(id -g)" legacy_exact/build/selector_probe
+          cat legacy_exact/build/selector_probe/source_prepare.log
+          python3 ci/package_selector_source_fmu.py
+      - name: Verify new FMU interface and provenance
         shell: bash
         run: |
           set -euo pipefail
@@ -88,6 +95,15 @@ jobs:
           print(json.dumps(manifest,indent=2))
           print('NEW_SELECTOR_FMU_INTERFACE_PASS')
           PY
+      - name: Make generated diagnostics readable
+        if: always()
+        shell: bash
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" legacy_exact/build/selector_probe
+          find legacy_exact/build/selector_probe -maxdepth 2 -type f | head -80 || true
+          for f in legacy_exact/build/selector_probe/*FMU.log legacy_exact/build/selector_probe/source_prepare.log; do
+            if test -f "$f"; then echo "--- $f ---"; tail -80 "$f"; fi
+          done
       - name: Preserve source and diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -96,7 +112,7 @@ jobs:
           path: |
             legacy_exact/build/selector_probe/*.fmu
             legacy_exact/build/selector_probe/*.mo
-            legacy_exact/build/selector_probe/*.json
+            legacy_exact/build/selector_probe/selector_manifest.json
             legacy_exact/build/selector_probe/*.log
           if-no-files-found: error
           retention-days: 30
