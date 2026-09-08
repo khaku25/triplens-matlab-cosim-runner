@@ -1,0 +1,9 @@
+setting_id,category,value,unit,status,source_reference,notes
+LOGIC_SAMPLE_TIME_MS,SYSTEM,1,ms,MIGRATION_DESIGN,TripLens ECMS fixed-step core,ECMS command and feedback ordering interval
+FWP_RATED_SPEED_RPM,MOTOR_MECHANISM,1400,rpm,SOURCE_MODEL_EXACT,ThermoSysPro CombinedCycle_TripTAC arretPomesHP Initialvalue,Native HP feedwater pump normal speed
+SPEED_PROVEN_RPM,OPERATION_STATE,1260,rpm,MODEL_DERIVED_ABSOLUTE,90 percent of 1400 rpm virtual-model rated speed,Absolute state proof only; not a rate-of-change alarm
+ZERO_SPEED_RPM,OPERATION_STATE,5,rpm,MODEL_VALIDATION_ABSOLUTE,FWP native physics experiment zero-speed gate,Absolute reset and stop-complete criterion
+BUS_START_MIN_KV,START_PERMISSIVE,5.52,kV,MODEL_ABSOLUTE_NOT_PLANT_APPROVED,ECMS virtual BUS-A 80 percent of 6.9 kV,Absolute virtual-model start permissive; replace after approved setting is supplied
+FWP_FEEDER_OPEN_DELAY_MS,BREAKER_MECHANISM,80,ms,VIRTUAL_TIMING_NOT_PLANT_APPROVED,Existing ECMS virtual breaker timing,Command-to-VCB-A01 open-feedback delay
+MOTOR_ACCEL_TAU_S,MOTOR_MECHANISM,1.2,s,VIRTUAL_MOTOR_SURROGATE_NOT_PLANT_APPROVED,TripLens FWP virtual motor mechanism,Used only until vendor motor/load/inertia data is available
+MOTOR_COAST_TAU_S,MOTOR_MECHANISM,1.0,s,VIRTUAL_MOTOR_SURROGATE_NOT_PLANT_APPROVED,Bounded by current 5 s coast-down experiment,Physical state decay; no dRPM/dt protection or alarm is generated

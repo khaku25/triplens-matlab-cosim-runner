@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0",
+  "equipment_id": "FWP-HP",
+  "electrical_attachment": {
+    "bus": "BUS-A",
+    "feeder": "VCB-A01",
+    "nominal_voltage_kv": 6.9,
+    "normal_stopped_breaker_state": "CLOSED"
+  },
+  "tag_master_commands": {
+    "run_request": "FWP_HP_RUN",
+    "trip_request": "FWP_HP_TRIP",
+    "reset_request": "FWP_HP_RESET"
+  },
+  "operation_sequence": {
+    "start": "FWP_HP_RUN 0->1; check permissives; leave VCB-A01 closed; energize motor; build physical RPM; assert SPEED_PROVEN and RUNNING",
+    "normal_stop": "FWP_HP_RUN 1->0; remove run enable; keep VCB-A01 closed; coast RPM to the absolute zero-speed gate; return READY",
+    "trip": "latch trip; remove run enable; issue VCB-A01 trip; change closed feedback to open after breaker delay; coast RPM instead of forcing zero",
+    "reset": "require trip cause clear, run request off, speed <= zero-speed gate and breaker open; clear latch only; do not reclose and do not restart",
+    "reclose": "separate VCB-A01 close command after reset; START cannot reclose the breaker"
+  },
+  "states": {
+    "1": "READY",
+    "2": "STARTING",
+    "3": "RUNNING",
+    "4": "STOPPING",
+    "5": "TRIPPED",
+    "6": "RESET_WAIT"
+  },
+  "ownership": {
+    "DCS": ["run request", "process start permissive", "normal stop sequencing"],
+    "ECMS": ["BUS-A voltage", "VCB-A01 trip and position", "electrical trip", "motor ready and run feedback"],
+    "motor_surrogate": ["RPM acceleration and coast-down until an electrical motor model is connected"],
+    "ThermoSysPro": ["feedwater flow", "pressure", "drum level", "process response"]
+  },
+  "active_logic_policy": {
+    "absolute_H_HH_L_LL_process_alarms": "DISABLED_UNTIL_PHYSICAL_INPUT_IS_CONNECTED",
+    "rate_of_change_alarms": "NOT_IMPLEMENTED",
+    "derivative_trip_logic": "NOT_IMPLEMENTED"
+  },
+  "co_simulation_boundary": {
+    "command_to_thermo": "thermo_speed_input_rpm -> PompeAlimHP.rpm_or_mpower",
+    "thermo_feedback": "TSP.DRUM.HP.FW_FLOW in kg/s; drum level in m; drum pressure in Pa",
+    "electrical_feedback_replacement": "Replace virtual feeder_cb_closed_fb and run_fb with solved ECMS electrical-twin feedback",
+    "time_order": "read feedback at synchronization point; execute logic; apply command for next step; solve electrical and process states; record native timestamps"
+  },
+  "engineering_status": "EXECUTABLE_VIRTUAL_MODEL_NOT_PLANT_APPROVED",
+  "guardrail": "1400 rpm is taken directly from the ThermoSysPro model. Breaker timing and motor time constants are virtual-model parameters until approved C&E, breaker data and motor/load/inertia data are supplied."
+}
