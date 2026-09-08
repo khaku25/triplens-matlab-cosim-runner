@@ -60,12 +60,11 @@ jobs:
           cd("/workspace/build/source_fmu");
           checkModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_CombinedCycle_TripTAC_CoSim);
           getErrorString();
-          buildModelFMU(
+          translateModelFMU(
             ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_CombinedCycle_TripTAC_CoSim,
             version="2.0",
             fmuType="cs",
-            fileNamePrefix="TripLens_CombinedCycle_TripTAC_CoSim",
-            platforms={});
+            fileNamePrefix="TripLens_CombinedCycle_TripTAC_CoSim");
           getErrorString();
           MOS
           docker run --rm \
@@ -74,6 +73,8 @@ jobs:
             -w /workspace \
             openmodelica/openmodelica:v1.27.0-minimal \
             omc /workspace/build/source_fmu/export_source_fmu.mos | tee legacy_exact/build/source_fmu/export_source_fmu.log
+          echo '--- source FMU directory ---'
+          find legacy_exact/build/source_fmu -maxdepth 3 -type f -printf '%P\n' | sort | head -200
           test -s legacy_exact/build/source_fmu/TripLens_CombinedCycle_TripTAC_CoSim.fmu
 
       - name: Verify source FMU contract
@@ -124,7 +125,7 @@ jobs:
       - name: Compile FMU sources for Windows and run Simulink smoke
         shell: cmd
         run: |
-          "C:\Program Files\MATLAB\R2025b\bin\matlab.exe" -batch "fmu=fullfile(getenv('GITHUB_WORKSPACE'),'fmu_artifact','TripLens_CombinedCycle_TripTAC_CoSim.fmu'); assert(isfile(fmu)); cd(getenv('GITHUB_WORKSPACE')); fmudialog.compileFMUSources(fmu,'FMUMode','Co-Simulation'); compiled=fullfile(getenv('GITHUB_WORKSPACE'),'TripLens_CombinedCycle_TripTAC_CoSim.fmu'); assert(isfile(compiled)); mdl='TripLens_TripTAC_FMU_Smoke'; if bdIsLoaded(mdl),bdclose(mdl);end; new_system(mdl); add_block('simulink/Sources/Constant',[mdl '/GT_Flow'],'Value','606.94','Position',[30 60 90 90]); add_block('simulink/Sources/Constant',[mdl '/GT_Temperature'],'Value','893.75','Position',[30 130 90 160]); add_block('simulink_extras/FMU Import/FMU',[mdl '/Thermo_FMU'],'FMUName',compiled,'Position',[180 45 480 260]); set_param([mdl '/Thermo_FMU'],'FMUInputMapping','Flat','FMUOutputMapping','Flat'); ph=get_param([mdl '/Thermo_FMU'],'PortHandles'); assert(numel(ph.Inport)==2,['expected 2 inputs, got ' num2str(numel(ph.Inport))]); assert(numel(ph.Outport)>=7,['expected >=7 outputs, got ' num2str(numel(ph.Outport))]); add_line(mdl,'GT_Flow/1','Thermo_FMU/1','autorouting','on'); add_line(mdl,'GT_Temperature/1','Thermo_FMU/2','autorouting','on'); set_param(mdl,'SolverType','Fixed-step','FixedStep','0.1','StopTime','0.2'); mkdir(fullfile(getenv('GITHUB_WORKSPACE'),'outputs')); save_system(mdl,fullfile(getenv('GITHUB_WORKSPACE'),'outputs',[mdl '.slx'])); sim(mdl); fid=fopen(fullfile(getenv('GITHUB_WORKSPACE'),'outputs','triptac_fmu_smoke.txt'),'w'); fprintf(fid,'SIMULINK FMU SMOKE PASS\ninputs=%d\noutputs=%d\n',numel(ph.Inport),numel(ph.Outport)); fclose(fid); bdclose(mdl); disp('SIMULINK FMU SMOKE PASS');"
+          "C:\Program Files\MATLAB\R2025b\bin\matlab.exe" -batch "fmu=fullfile(getenv('GITHUB_WORKSPACE'),'fmu_artifact','TripLens_CombinedCycle_TripTAC_CoSim.fmu'); assert(isfile(fmu)); cd(getenv('GITHUB_WORKSPACE')); fmudialog.compileFMUSources(fmu,'FMUMode','Co-Simulation'); compiled=fullfile(getenv('GITHUB_WORKSPACE'),'TripLens_CombinedCycle_TripTAC_CoSim.fmu'); assert(isfile(compiled)); mdl='TripLens_TripTAC_FMU_Smoke'; if bdIsLoaded(mdl),bdclose(mdl);end; new_system(mdl); add_block('simulink/Sources/Constant',[mdl '/GT_Flow'],'Value','606.94','Position',[30 60 90 90]); add_block('simulink/Sources/Constant',[mdl '/GT_Temperature'],'Value','893.75','Position',[30 130 90 160]); add_block('simulink_extras/FMU Import/FMU',[mdl '/Thermo_FMU'],'FMUName',compiled,'Position',[180 45 480 260]); set_param([mdl '/Thermo_FMU'],'FMUInputMapping','Flat','FMUOutputMapping','Flat'); ph=get_param([mdl '/Thermo_FMU'],'PortHandles'); assert(numel(ph.Inport)==2,['expected 2 inputs, got ' num2str(numel(ph.Inport))]); assert(numel(ph.Outport)>=7,['expected >=7 outputs, got ' num2str(numel(ph.Outport))]); add_line(mdl,'GT_Flow/1','Thermo_FMU/1','autorouting','on'); add_line(mdl,'GT_Temperature/1','Thermo_FMU/2','autorouting','on'); set_param(mdl,'SolverType','Fixed-step','FixedStep','0.1','StopTime','0.2'); if ~isfolder(fullfile(getenv('GITHUB_WORKSPACE'),'outputs')), mkdir(fullfile(getenv('GITHUB_WORKSPACE'),'outputs')); end; save_system(mdl,fullfile(getenv('GITHUB_WORKSPACE'),'outputs',[mdl '.slx'])); sim(mdl); fid=fopen(fullfile(getenv('GITHUB_WORKSPACE'),'outputs','triptac_fmu_smoke.txt'),'w'); fprintf(fid,'SIMULINK FMU SMOKE PASS\ninputs=%d\noutputs=%d\n',numel(ph.Inport),numel(ph.Outport)); fclose(fid); bdclose(mdl); disp('SIMULINK FMU SMOKE PASS');"
 
       - name: Upload Windows Simulink smoke outputs
         if: always()
