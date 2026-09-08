@@ -8,8 +8,7 @@ logicDir=fullfile(repoRoot,'ecms_pump_logic');
 outDir=fullfile(repoRoot,'outputs');
 if ~isfolder(outDir), mkdir(outDir); end
 
-cfg=readtable(fullfile(logicDir,'fwp_hp_settings_v1.csv'), ...
-    'TextType','string','VariableNamingRule','preserve');
+cfg=readcell(fullfile(logicDir,'fwp_hp_settings_v1.csv'),'Delimiter',',');
 getv=@(name) settingValue(cfg,name);
 sampleMs=getv('LOGIC_SAMPLE_TIME_MS'); Ts=sampleMs/1000;
 ratedRpm=getv('FWP_RATED_SPEED_RPM');
@@ -222,11 +221,11 @@ if ~pass, error('TripLens:FwpOperationTestFailed','FWP-HP operation test failed.
 close_system(modelName,0);
 end
 
-function value=settingValue(tbl,name)
-% Use stable column positions because localized MATLAB installations can
-% normalize imported CSV header names differently even with preserve mode.
-settingIds=string(tbl{:,1});
-settingValues=string(tbl{:,3});
+function value=settingValue(raw,name)
+% Skip the header and use stable cell positions. This avoids localized
+% readtable header/type normalization on the Windows self-hosted runner.
+settingIds=strtrim(string(raw(2:end,1)));
+settingValues=strtrim(string(raw(2:end,3)));
 idx=find(settingIds==string(name),1);
 if isempty(idx), error('TripLens:MissingSetting','Missing setting %s',name); end
 value=str2double(settingValues(idx));
