@@ -28,6 +28,9 @@ assert(isfolder(modelsDir),'TripLens:MissingModelsDirectory', ...
     'ECMS referenced-model folder does not exist: %s',modelsDir);
 addpath(modelsDir,'-begin');
 cleanupPath=onCleanup(@() rmpath(modelsDir)); %#ok<NASGU>
+coreName='TripLens_ECMS_A_Logic_Core';
+corePath=fullfile(modelsDir,[coreName '.slx']);
+assert(isfile(corePath),'TripLens:MissingLogicCore','Missing ECMS logic core: %s',corePath);
 target=[modelName '/Protection_Control'];
 if bdIsLoaded(modelName), close_system(modelName,0); end
 load_system(modelPath);
@@ -66,11 +69,15 @@ for k=1:n
             end
         end
         [background,foreground]=signalColor(char(T.source_layer(k)),direction,char(T.status(k)));
-        label=sprintf('SOURCE: %s\nTAG: %s\nSTATE: %s', ...
-            char(T.source_layer(k)),char(tagDisplay(k)),char(T.status(k)));
+        if internalConnected(k), internalShort='OK'; else, internalShort='MISS'; end
+        if externalConnected(k) && externalTagDeclared(k), externalShort='OK'; else, externalShort='PENDING'; end
+        label=sprintf('%s | INT:%s | EXT:%s', ...
+            shortLayer(char(T.source_layer(k))),internalShort,externalShort);
+        description=sprintf('ROLE: %s\nSOURCE: %s\nTAG: %s\nSTATE: %s', ...
+            char(T.role(k)),char(T.source_layer(k)),char(tagDisplay(k)),char(T.status(k)));
         set_param(char(blockPath(k)),'BackgroundColor',background, ...
             'ForegroundColor',foreground,'FontWeight','bold', ...
-            'AttributesFormatString',label,'Description',sprintf('%s\n%s',char(T.role(k)),label));
+            'FontSize','9','AttributesFormatString',label,'Description',description);
     end
     if blockExists(k) && internalConnected(k)
         internalStatus(k)="CONNECTED_TO_A_LOGIC_CORE";
@@ -114,6 +121,18 @@ catch imageErr
     pngMessage=imageErr.message;
 end
 
+corePngPath=fullfile(outDir,'ecms_a_logic_hierarchy.png');
+corePngGenerated=false; corePngMessage='';
+try
+    load_system(corePath);
+    open_system(coreName);
+    set_param(coreName,'ZoomFactor','FitSystem');
+    print(['-s' coreName],'-dpng','-r150',corePngPath);
+    corePngGenerated=isfile(corePngPath);
+catch coreImageErr
+    corePngMessage=coreImageErr.message;
+end
+
 report=struct();
 report.model=modelName; report.model_path=modelPath; report.target=target;
 report.port_count=n; report.input_count=sum(T.direction=="IN");
@@ -125,6 +144,7 @@ report.external_tag_declared_count=sum(externalTagDeclared);
 report.end_to_end_complete_count=sum(externalConnected & externalTagDeclared & internalConnected);
 report.logic_hierarchy={'GT_Trip_Protection','Bus_Protection_Transfer','ST_State_Monitor'};
 report.png_generated=pngGenerated; report.png_message=pngMessage;
+report.core_png_generated=corePngGenerated; report.core_png_message=corePngMessage;
 report.ports=table2struct(R);
 report.note=['Internal connection means the ECMS boundary port is wired to A Logic Core. ' ...
     'It does not mean the external Electrical/Thermo physical source is already wired.'];
@@ -139,6 +159,22 @@ fprintf(['TRIPLENS ECMS TRACEABILITY EXPORTED\nPORTS=%d\nINTERNAL_CONNECTED=%d\n
     'EXTERNAL_LINES=%d\nEXTERNAL_TAGS=%d\nEND_TO_END=%d\n'], ...
     n,sum(internalConnected),sum(externalConnected),sum(externalTagDeclared), ...
     report.end_to_end_complete_count);
+end
+
+function label=shortLayer(layer)
+if contains(layer,'ELECTRICAL')
+    label='ELEC';
+elseif contains(layer,'THERMO')
+    label='THERMO';
+elseif contains(layer,'COMMAND')
+    label='CMD';
+elseif contains(layer,'SETTING')
+    label='SET';
+elseif contains(layer,'PROTECTION')
+    label='PROT';
+else
+    label='SIGNAL';
+end
 end
 
 function [background,foreground]=signalColor(layer,direction,status)
