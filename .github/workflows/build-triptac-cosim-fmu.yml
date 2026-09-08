@@ -1,0 +1,109 @@
+name: Build TripTAC Co-Sim FMU
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'legacy_exact/scripts/build_trip_tac_cosim.py'
+      - '.github/workflows/build-triptac-cosim-fmu.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-fmu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare pinned ThermoSysPro
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf legacy_exact/vendor/ThermoSysPro legacy_exact/build/cosim
+          mkdir -p legacy_exact/vendor legacy_exact/build/cosim/omhome legacy_exact/outputs
+          git clone --no-checkout https://github.com/Dwarf-Planet-Project/ThermoSysPro.git legacy_exact/vendor/ThermoSysPro
+          git -C legacy_exact/vendor/ThermoSysPro checkout --detach db81ae1b5a6a85f6c6c7693244cafa6087e18ff5
+          test "$(git -C legacy_exact/vendor/ThermoSysPro rev-parse HEAD)" = "db81ae1b5a6a85f6c6c7693244cafa6087e18ff5"
+
+      - name: Generate external-input TripTAC wrapper
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 legacy_exact/scripts/build_trip_tac_cosim.py
+          test -s legacy_exact/build/TripLens_CombinedCycle_TripTAC_CoSim.mo
+
+      - name: Install Modelica 3.2.3
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$PWD/legacy_exact/build/cosim/omhome:/root" \
+            -v "$PWD/legacy_exact:/workspace" \
+            -w /workspace \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            omc /workspace/modelica/install_dependencies.mos
+
+      - name: Create FMU export script
+        shell: bash
+        run: |
+          cat > legacy_exact/build/cosim/export_fmu.mos <<'MOS'
+          setCommandLineOptions("--std=3.4");
+          loadModel(Modelica, {"3.2.3"});
+          getErrorString();
+          loadFile("/workspace/vendor/ThermoSysPro/ThermoSysPro/package.mo");
+          getErrorString();
+          loadFile("/workspace/build/TripLens_CombinedCycle_TripTAC_CoSim.mo");
+          getErrorString();
+          cd("/workspace/build/cosim");
+          checkModel(TripLens_CombinedCycle_TripTAC_CoSim);
+          getErrorString();
+          buildModelFMU(TripLens_CombinedCycle_TripTAC_CoSim, version="2.0", fmuType="cs", fileNamePrefix="TripLens_CombinedCycle_TripTAC_CoSim");
+          getErrorString();
+          MOS
+
+      - name: Build FMI 2.0 Co-Simulation FMU
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$PWD/legacy_exact/build/cosim/omhome:/root" \
+            -v "$PWD/legacy_exact:/workspace" \
+            -w /workspace \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            omc /workspace/build/cosim/export_fmu.mos | tee legacy_exact/build/cosim/export_fmu.log
+          test -s legacy_exact/build/cosim/TripLens_CombinedCycle_TripTAC_CoSim.fmu
+
+      - name: Verify FMU interface
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import zipfile, re
+          p='legacy_exact/build/cosim/TripLens_CombinedCycle_TripTAC_CoSim.fmu'
+          with zipfile.ZipFile(p) as z:
+              xml=z.read('modelDescription.xml').decode('utf-8')
+          required=[
+            'gtExhaustFlowCmd','gtExhaustTemperatureCmd','stElectricalPower',
+            'hpDrumLevel','ipDrumLevel','lpDrumLevel',
+            'hpDrumPressure','ipDrumPressure','lpDrumPressure']
+          missing=[x for x in required if x not in xml]
+          assert not missing, f'missing FMU variables: {missing}'
+          assert 'CoSimulation' in xml, 'not a Co-Simulation FMU'
+          print('TRIPTAC COSIM FMU PASS')
+          print('inputs: gtExhaustFlowCmd, gtExhaustTemperatureCmd')
+          print('outputs:', ', '.join(required[2:]))
+          PY
+
+      - name: Upload FMU
+        uses: actions/upload-artifact@v4
+        with:
+          name: triplens-triptac-cosim-fmu-${{ github.run_number }}
+          path: |
+            legacy_exact/build/cosim/TripLens_CombinedCycle_TripTAC_CoSim.fmu
+            legacy_exact/build/cosim/export_fmu.log
+            legacy_exact/build/TripLens_CombinedCycle_TripTAC_CoSim.mo
+          if-no-files-found: error
+          retention-days: 30
