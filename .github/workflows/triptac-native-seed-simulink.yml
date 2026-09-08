@@ -1,0 +1,81 @@
+name: TripTAC Native State Seed Simulink Probe
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/triptac-native-seed-simulink.yml'
+      - 'ci/build_native_seed_fmu.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: triptac-native-state-seed-probe
+  cancel-in-progress: false
+
+jobs:
+  prepare-native-seed:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download exact already-solved native internal state
+        uses: actions/download-artifact@v4
+        with:
+          name: triptac-native-full-state-1
+          run-id: 34220970632
+          github-token: ${{ github.token }}
+          path: native_state
+      - name: Download original selector source FMU
+        uses: actions/download-artifact@v4
+        with:
+          name: selector-source-fmu-7
+          run-id: 34217750061
+          github-token: ${{ github.token }}
+          path: selector_source
+      - name: Prepare isolated source copy with native seeds
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install 'scipy==1.16.1'
+          NATIVE=$(find native_state -name native_full_res.mat -print -quit)
+          FMU=$(find selector_source -name TripLens_CombinedCycle_TripTAC_CoSim.fmu -print -quit)
+          test -n "$NATIVE" && test -n "$FMU"
+          python3 ci/build_native_seed_fmu.py --source-fmu "$FMU" --native-mat "$NATIVE" --out prepared_seed
+      - name: Preserve exact seeded source and mapping
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-seeded-source-${{ github.run_number }}
+          path: prepared_seed/
+          if-no-files-found: error
+          retention-days: 30
+
+  windows-simulink-native-seed:
+    needs: prepare-native-seed
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 30
+    env:
+      TRIPLENS_USE_NATIVE_SEED: '1'
+      TRIPLENS_RETAIN_VALIDATED_NLS_GUESS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download only this run's seeded source
+        uses: actions/download-artifact@v4
+        with:
+          name: native-seeded-source-${{ github.run_number }}
+          path: fmu_artifact
+      - name: Compile on installed MATLAB and run actual Simulink input-response probes
+        shell: cmd
+        run: |
+          "C:\Program Files\MATLAB\R2025b\bin\matlab.exe" -batch "addpath(fullfile(getenv('GITHUB_WORKSPACE'),'ci')); matlab_mingw_fmu_smoke; copyfile(fullfile(getenv('GITHUB_WORKSPACE'),'fmu_artifact','native_seed_manifest.json'),fullfile(getenv('GITHUB_WORKSPACE'),'outputs','native_seed_manifest.json')); matlab_selector_fmu_probe"
+      - name: Preserve simulation evidence even when initialization or stepping fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-seeded-simulink-evidence-${{ github.run_number }}
+          path: outputs/
+          if-no-files-found: warn
+          retention-days: 30
