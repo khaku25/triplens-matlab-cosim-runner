@@ -51,6 +51,8 @@ jobs:
           loadFile("/repo/legacy_exact/vendor/ThermoSysPro/ThermoSysPro/package.mo"); getErrorString();
           loadFile("/repo/plant_v2/build/TripLens_Plant_V2_CoSim.mo"); getErrorString();
           cd("/repo/plant_v2/build/fmu");
+          checkModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_Plant_V2_CoSim);
+          getErrorString();
           translateModelFMU(
             ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_Plant_V2_CoSim,
             version="2.0",
@@ -64,7 +66,19 @@ jobs:
             -w /repo \
             openmodelica/openmodelica:v1.27.0-minimal \
             omc /repo/plant_v2/build/fmu/export.mos | tee plant_v2/build/fmu/export.log
-          test -s plant_v2/build/fmu/TripLens_Plant_V2_CoSim.fmu
+          echo '--- generated FMU files ---'
+          find plant_v2/build/fmu -maxdepth 3 -type f -printf '%P\n' | sort | head -200
+          canonical="plant_v2/build/fmu/TripLens_Plant_V2_CoSim.fmu"
+          if [[ ! -s "$canonical" ]]; then
+            actual="$(find plant_v2/build/fmu -maxdepth 3 -type f -name '*.fmu' -print -quit)"
+            if [[ -z "$actual" || ! -s "$actual" ]]; then
+              echo 'translateModelFMU returned without a usable .fmu artifact' >&2
+              exit 1
+            fi
+            cp "$actual" "$canonical"
+            echo "Canonicalized FMU path: $actual -> $canonical"
+          fi
+          test -s "$canonical"
 
       - name: Verify integrated v2 FMI contract
         shell: bash
