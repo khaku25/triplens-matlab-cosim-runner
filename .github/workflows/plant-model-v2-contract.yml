@@ -55,7 +55,10 @@ jobs:
           loadModel(Modelica,{"3.2.3"}); getErrorString();
           loadFile("/repo/legacy_exact/vendor/ThermoSysPro/ThermoSysPro/package.mo"); getErrorString();
           loadFile("/repo/plant_v2/build/TripLens_Plant_V2_CoSim.mo"); getErrorString();
+          loadFile("/repo/plant_v2/modelica/TripLens_Plant_V2_Normal100.mo"); getErrorString();
           checkModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_Plant_V2_CoSim);
+          getErrorString();
+          checkModel(TripLens_Plant_V2_Normal100);
           getErrorString();
           MOS
           docker run --rm \
@@ -65,6 +68,7 @@ jobs:
             openmodelica/openmodelica:v1.27.0-minimal \
             omc /repo/plant_v2/build/check_v2.mos | tee plant_v2/build/check_v2.log
           grep -q "Check of ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_Plant_V2_CoSim completed successfully" plant_v2/build/check_v2.log
+          grep -q "Check of TripLens_Plant_V2_Normal100 completed successfully" plant_v2/build/check_v2.log
           echo PLANT_V2_OPENMODELICA_CHECK_PASS
 
       - name: Upload generated v2 evidence
@@ -75,6 +79,7 @@ jobs:
           path: |
             plant_v2/build/TripLens_Plant_V2_CoSim.mo
             plant_v2/build/check_v2.log
+            plant_v2/modelica/TripLens_Plant_V2_Normal100.mo
             plant_v2/plant_model_v2_contract.json
             plant_v2/README.md
           if-no-files-found: warn
