@@ -1,11 +1,18 @@
 function install_a_logic_into_ecms()
 %INSTALL_A_LOGIC_INTO_ECMS Install the validated A logic core into ECMS shell.
 % Refuses to overwrite an unknown Protection_Control implementation.
+% Port lists are read from a_logic_interface_v1.csv so the installed shell
+% always follows the validated model-reference interface.
 
 repoRoot = getenv('GITHUB_WORKSPACE');
 if isempty(repoRoot), repoRoot = fileparts(fileparts(mfilename('fullpath'))); end
 outDir = fullfile(repoRoot,'outputs');
 if ~isfolder(outDir), mkdir(outDir); end
+interfacePath = fullfile(repoRoot,'ecms_logic','a_logic_interface_v1.csv');
+assert(isfile(interfacePath),'TripLens:MissingInterface','Missing ECMS interface: %s',interfacePath);
+T = readtable(interfacePath,'TextType','string','VariableNamingRule','preserve');
+inputs = cellstr(T.signal_name(upper(T.direction)=="IN"));
+outputs = cellstr(T.signal_name(upper(T.direction)=="OUT"));
 
 mdrive = '';
 try
@@ -39,13 +46,7 @@ assert(getSimulinkBlockHandle(target) ~= -1,'TripLens:MissingProtectionTarget', 
 children = find_system(target,'SearchDepth',1,'Type','Block');
 children = children(~strcmp(children,target));
 childNames = cellfun(@(p)get_param(p,'Name'),children,'UniformOutput',false);
-allowed = {'In1','Out1','A_Logic_Core', ...
-    'gt_trip_cmd','relay_86gt_healthy','cb_52gt_reset_cmd','cb_52gt_closed_fb', ...
-    'bus_a_voltage_kv','bus_b_voltage_kv','bus_a_native_live','bus_b_native_live', ...
-    'bus_a_fault_active','bus_b_fault_active','stg_power_mw','auto_bus_tie_enable', ...
-    'allow_source_parallel','relay_86gt_trip_received','relay_86gt_operated', ...
-    'cb_52gt_trip_cmd','bus_a_27uv_operate','bus_b_27uv_operate', ...
-    'cb_tie_ab_auto_close_permissive','stg_low_state'};
+allowed = [{'In1','Out1','A_Logic_Core'}, inputs(:)', outputs(:)'];
 unknown = setdiff(childNames,allowed);
 assert(isempty(unknown),'TripLens:ProtectionControlNotEmpty', ...
     'Refusing to overwrite unknown blocks in Protection_Control: %s',strjoin(unknown,', '));
@@ -56,35 +57,28 @@ for k=1:numel(children)
     if getSimulinkBlockHandle(children{k}) ~= -1, delete_block(children{k}); end
 end
 
-inputs = {'gt_trip_cmd','relay_86gt_healthy','cb_52gt_reset_cmd', ...
-    'cb_52gt_closed_fb','bus_a_voltage_kv','bus_b_voltage_kv', ...
-    'bus_a_native_live','bus_b_native_live','bus_a_fault_active', ...
-    'bus_b_fault_active','stg_power_mw','auto_bus_tie_enable', ...
-    'allow_source_parallel'};
-outputs = {'relay_86gt_trip_received','relay_86gt_operated', ...
-    'cb_52gt_trip_cmd','bus_a_27uv_operate','bus_b_27uv_operate', ...
-    'cb_tie_ab_auto_close_permissive','stg_low_state'};
-
 ref = [target '/A_Logic_Core'];
+refHeight = max(735,80+max(numel(inputs),numel(outputs))*48);
 add_block('built-in/ModelReference',ref,'ModelName',coreName, ...
-    'Position',[470 80 680 735]);
+    'Position',[500 80 720 refHeight]);
 for k=1:numel(inputs)
-    y=35+(k-1)*55;
+    y=35+(k-1)*42;
     p=[target '/' inputs{k}];
     add_block('simulink/Sources/In1',p,'Port',num2str(k), ...
-        'Position',[25 y 205 y+22]);
+        'Position',[25 y 230 y+22]);
     add_line(target,[inputs{k} '/1'],['A_Logic_Core/' num2str(k)],'autorouting','on');
 end
 for k=1:numel(outputs)
-    y=70+(k-1)*105;
+    y=70+(k-1)*72;
     p=[target '/' outputs{k}];
     add_block('simulink/Sinks/Out1',p,'Port',num2str(k), ...
-        'Position',[940 y 1170 y+22]);
+        'Position',[980 y 1220 y+22]);
     add_line(target,['A_Logic_Core/' num2str(k)],[outputs{k} '/1'],'autorouting','on');
 end
 
 set_param(target,'Description', ...
-    'Validated A-program logic core v2. Absolute kV/MW inputs; model-calibrated, not plant-approved.');
+    ['Validated A-program logic core v3. Common trip matrix: GT Trip -> ST Trip; ' ...
+     'drum HH -> ST only; drum LL -> GT + ST. Layer1 alarms remain separate inputs.']);
 set_param(mainName,'SolverType','Fixed-step','Solver','FixedStepDiscrete','FixedStep','0.001');
 save_system(mainName,mainPath);
 
@@ -112,15 +106,18 @@ report=struct();
 report.model=mainName; report.model_path=mainPath;
 report.target_subsystem='Protection_Control';
 report.referenced_model=coreName; report.referenced_model_path=corePath;
+report.interface_file=interfacePath;
 report.input_count=numel(inputs); report.output_count=numel(outputs);
 report.inputs=inputs; report.outputs=outputs;
 report.solver='FixedStepDiscrete'; report.fixed_step_s=0.001;
 report.compile_update_pass=compilePass; report.compile_status=compileStatus;
 report.compile_message=compileMessage; report.installed=true;
 report.fmu_search_name=fmuName; report.fmu_match_count=numel(fmuMatches);
-report.install_mode='SAFE_IDEMPOTENT_MODEL_REFERENCE';
-report.note=['A logic core installed into the ECMS shell. External Electrical/Thermo ' ...
-    'signals remain to be wired during co-simulation integration.'];
+report.install_mode='SAFE_IDEMPOTENT_MODEL_REFERENCE_DYNAMIC_INTERFACE';
+report.protection_policy=struct('gt_trip_intertrips_st',true, ...
+    'drum_hh_action','ST_ONLY','drum_ll_action','GT_AND_ST');
+report.note=['A logic core installed into the ECMS shell. External Layer1 alarm and ' ...
+    'Electrical/Thermo source lines remain to be wired during co-simulation integration.'];
 reportPath=fullfile(outDir,'ecms_a_logic_install_report.json');
 fid=fopen(reportPath,'w','n','UTF-8');
 assert(fid>=0,'TripLens:ReportWrite','Could not write install report.');
