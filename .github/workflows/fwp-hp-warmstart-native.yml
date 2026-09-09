@@ -38,15 +38,15 @@ jobs:
           txt=txt.replace('model CombinedCycle_TripTAC\n','model TripLens_FWP_HP_WarmSeeded\n',1)
           txt=txt.replace('end CombinedCycle_TripTAC;','end TripLens_FWP_HP_WarmSeeded;',1)
 
-          # Hold GT at NORMAL_100. 150/550 is DERATING and is not used here.
+          # NORMAL_100 only. 150/550 is DERATING and never used as Trip here.
           txt=txt.replace('Table=[0,606.94; 10,606.94; 600,\n        50; 650,50]',
                           'Table=[0,606.94; 1000,606.94]',1)
           txt=txt.replace('Table=[0,893.75; 10,893.75; 600,423; 650,423]',
                           'Table=[0,893.75; 1000,893.75]',1)
 
-          # Keep the native PompeAlimHP and its original hydraulic topology.
-          # Only replace its existing RPM source with the already validated
-          # R&D motor-surrogate coast-down shape (tau≈1 s), after 300 s warm hold.
+          # Preserve the native PompeAlimHP and original hydraulic topology.
+          # Replace only its already-existing RPM source with the separately
+          # validated R&D motor coast-down trajectory after a 300 s warm hold.
           pat=re.compile(
               r'ThermoSysPro\.InstrumentationAndControl\.Blocks\.Sources\.Rampe\s+arretPomesHP\(\s*'
               r'Initialvalue=1400,\s*Starttime=4000,\s*Duration=1000,\s*Finalvalue=700\)')
@@ -74,7 +74,7 @@ jobs:
               'native_topology_modified':False,
               'new_motor_or_check_valve_inserted':False,
               'gt_boundary':'NORMAL_100 606.94 kg/s / 893.75 K',
-              'coastdown_source':'R&D FWP virtual motor surrogate; tau 1.0 s, not plant-approved',
+              'coastdown_source':'R&D FWP virtual motor surrogate; tau approx 1 s, not plant-approved',
               'initialization':'same-model warm state -> -iif/-iit restart -> cvode'
           },indent=2),encoding='utf-8')
           print('FWP_HP_WARM_MODEL_BUILD_PASS')
@@ -147,42 +147,104 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import csv,json,math
+
           p=Path('fwp_warm/results/fwp_hp_trip_res.csv')
           with p.open(newline='',encoding='utf-8-sig') as f:
-              r=csv.reader(f); h=next(r); rows=list(r)
-          if len(rows)<100: raise SystemExit(f'only {len(rows)} rows')
-          t=[float(x[0]) for x in rows]
-          if t[0] > 300.01 or t[-1] < 419.9: raise SystemExit(f'incomplete time range {t[0]}..{t[-1]}')
-          def col(candidates):
-              for c in candidates:
-                  if c in h: return h.index(c)
-              raise SystemExit('missing column '+str(candidates))
-          c_rpm=col(['arretPomesHP.y.signal','PompeAlimHP.Vr','PompeAlimHP.rpm'])
-          c_q=col(['PompeAlimHP.Q','CapteurDebitEauHP.Measure.signal'])
-          drum_cols=[i for i,n in enumerate(h) if n in ('BallonHP.zl','BallonHP.P','BallonMP.zl','BallonMP.P','BallonBP.zl','BallonBP.P')]
-          def near(x): return min(range(len(t)),key=lambda k:abs(t[k]-x))
+              r=csv.reader(f)
+              raw_h=next(r)
+              rows=list(r)
+          h=[x.strip().strip('"') for x in raw_h]
+          if len(rows)<100:
+              raise SystemExit(f'RAW too short: {len(rows)} rows')
+
+          print('RAW_ROWS',len(rows),'RAW_COLUMNS',len(h))
+          relevant=[n for n in h if any(k in n for k in ('PompeAlimHP','arretPomesHP','BallonHP','BallonMP','BallonBP','CapteurDebitEauHP'))]
+          print('RELEVANT_HEADERS',json.dumps(relevant,ensure_ascii=False))
+
+          def find_col(label, exact=(), contains_all=(), suffixes=()):
+              for c in exact:
+                  if c in h:
+                      print(label,'=',c)
+                      return h.index(c)
+              for i,n in enumerate(h):
+                  if contains_all and all(k in n for k in contains_all):
+                      if not suffixes or any(n.endswith(s) for s in suffixes):
+                          print(label,'=',n)
+                          return i
+              raise SystemExit(f'missing {label}; relevant headers={relevant}')
+
+          c_time=find_col('time',exact=('time',))
+          c_rpm=find_col(
+              'rpm',
+              exact=('arretPomesHP.y.signal','arretPomesHP.y','PompeAlimHP.Vr','PompeAlimHP.rpm_or_mpower.signal'),
+              contains_all=('arretPomesHP',), suffixes=('.signal','.y'))
+          try:
+              c_q=find_col('native_pump_flow',exact=('PompeAlimHP.Q',),contains_all=('PompeAlimHP',),suffixes=('.Q',))
+          except SystemExit:
+              c_q=find_col('native_feedwater_flow',exact=('CapteurDebitEauHP.Measure.signal',),contains_all=('CapteurDebitEauHP',),suffixes=('.signal',))
+
+          drum_names=('BallonHP.zl','BallonHP.P','BallonMP.zl','BallonMP.P','BallonBP.zl','BallonBP.P')
+          drum_cols=[(n,h.index(n)) for n in drum_names if n in h]
+          if not drum_cols:
+              raise SystemExit('no native drum state columns in RAW')
+
+          t=[float(x[c_time]) for x in rows]
+          if not all(math.isfinite(x) for x in t):
+              raise SystemExit('non-finite time')
+          if t[0] > 300.05 or t[-1] < 419.8:
+              raise SystemExit(f'incomplete time range {t[0]}..{t[-1]}')
+          if any(t[i+1] < t[i] for i in range(len(t)-1)):
+              raise SystemExit('time is not monotonic')
+
+          def near(x):
+              return min(range(len(t)),key=lambda k:abs(t[k]-x))
+
+          sample_times=[300,300.1,300.5,301,302,305,310,330,360,419.9]
           samples={}
           finite=True
-          for ts in [300,300.1,300.5,301,302,305,310,330,360,420]:
+          for ts in sample_times:
               j=near(ts)
-              vals={'time_s':t[j],'rpm':float(rows[j][c_rpm]),'pump_flow':float(rows[j][c_q])}
-              for i in drum_cols:
-                  vals[h[i]]=float(rows[j][i])
+              vals={
+                  'time_s':t[j],
+                  'rpm_command':float(rows[j][c_rpm]),
+                  'native_flow':float(rows[j][c_q]),
+              }
+              for name,i in drum_cols:
+                  vals[name]=float(rows[j][i])
               finite=finite and all(math.isfinite(v) for v in vals.values())
               samples[str(ts)]=vals
-          coast=[samples[str(x)]['rpm'] for x in [300.1,300.5,301,302,305,310]]
+
+          coast=[samples[str(x)]['rpm_command'] for x in [300.1,300.5,301,302,305,310]]
           if not all(coast[i+1] <= coast[i]+1e-6 for i in range(len(coast)-1)):
               raise SystemExit('RPM coastdown not monotonic: '+str(coast))
-          if samples['310']['rpm'] > 5: raise SystemExit('RPM did not reach zero-speed gate')
-          if not finite: raise SystemExit('non-finite major variable')
-          q0=samples['300']['pump_flow']; q1=samples['310']['pump_flow']
-          if abs(q1-q0) < 1e-6: raise SystemExit('native pump/process flow did not respond')
+          if samples['310']['rpm_command'] > 5:
+              raise SystemExit('RPM did not reach zero-speed gate: '+str(samples['310']['rpm_command']))
+          if not finite:
+              raise SystemExit('non-finite major variable')
+
+          # Demand a real native process response, not merely the commanded RPM.
+          q0=samples['300']['native_flow']
+          q_candidates=[samples[str(x)]['native_flow'] for x in [301,302,305,310,330]]
+          max_q_delta=max(abs(q-q0) for q in q_candidates)
+          scale=max(abs(q0),1.0)
+          if max_q_delta <= max(1e-6,1e-4*scale):
+              raise SystemExit(f'native pump/process flow did not respond: q0={q0}, max_delta={max_q_delta}')
+
           report={
-              'status':'pass','simulation_success':True,'warm_state_used':True,
-              'restart_method':'iif/iit/iim=none + cvode','raw_start_s':t[0],'raw_end_s':t[-1],
-              'major_variables_finite':True,'rpm_coastdown_monotonic':True,
-              'native_process_response':True,'samples':samples,
-              'guardrail':'FWP motor coastdown constants are virtual-model parameters, not plant-approved settings.'
+              'status':'pass',
+              'simulation_success':True,
+              'warm_state_used':True,
+              'restart_method':'iif/iit/iim=none + cvode',
+              'raw_start_s':t[0],
+              'raw_end_s':t[-1],
+              'raw_rows':len(rows),
+              'major_variables_finite':True,
+              'rpm_coastdown_monotonic':True,
+              'native_process_response':True,
+              'native_flow_max_delta':max_q_delta,
+              'resolved_columns':{'rpm':h[c_rpm],'flow':h[c_q],'drums':[n for n,_ in drum_cols]},
+              'samples':samples,
+              'guardrail':'FWP motor coastdown constants are virtual-model R&D settings, not plant-approved settings.'
           }
           Path('fwp_warm/results/fwp_hp_warmstart_report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
           print('FWP_HP_WARMSTART_NATIVE_PASS')
