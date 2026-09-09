@@ -161,7 +161,7 @@ jobs:
               '  public\n'
               '    ThermoSysPro.Units.Cv Cv(start=100);\n'
               '    Modelica.SIunits.MassFlowRate Q(start=75);\n'
-              '    Modelica.SIunits.DifferentialPressure deltaP;\n'
+              '    ThermoSysPro.Units.DifferentialPressure deltaP;\n'
               '    Modelica.SIunits.Density rho;\n'
               '    Modelica.SIunits.AbsolutePressure Pm(start=1e5);\n'
               '    Modelica.SIunits.SpecificEnthalpy h(start=1e5);\n'
