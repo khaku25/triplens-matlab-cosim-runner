@@ -20,8 +20,7 @@ if ~isfile(modelPath)
 end
 if ~bdIsLoaded(modelName), load_system(modelPath); end
 
-% Re-run the exact deterministic ECMS operation stimulus used by the validated
-% FWP-HP operation core. These are R&D stimuli, not plant records.
+% Exact deterministic R&D stimulus used by the validated FWP-HP operation core.
 t=(0:Ts:30)'; N=numel(t);
 runRequest=(t>=0.5 & t<6) | (t>=12 & t<20) | (t>=27);
 tripRequest=t>=18 & t<18.2;
@@ -86,8 +85,6 @@ raw=table(t, ...
 
 rawPath=fullfile(outDir,'ecms_fwp_hp_raw_1ms.csv');
 writetable(raw,rawPath,'Encoding','UTF-8');
-
-% A convenience slice only; the full RAW above is authoritative.
 tripWindow=raw(raw.time_s>=17.95 & raw.time_s<=19.20,:);
 writetable(tripWindow,fullfile(outDir,'ecms_fwp_hp_raw_trip_window_1ms.csv'),'Encoding','UTF-8');
 
@@ -114,6 +111,7 @@ idx6100=find(abs(raw.time_s-6.100)<1e-10,1);
 assert(raw.VCB_A01_CLOSED(idx6000)==1 && raw.VCB_A01_CLOSED(idx6100)==1, ...
     'TripLens:StopOpenedBreaker','Normal STOP opened VCB-A01.');
 
+firstOpen=find(raw.time_s>=18 & raw.VCB_A01_CLOSED==0,1,'first');
 report=struct();
 report.status='pass';
 report.raw_file='outputs/ecms_fwp_hp_raw_1ms.csv';
@@ -122,12 +120,12 @@ report.start_time_s=raw.time_s(1);
 report.end_time_s=raw.time_s(end);
 report.sample_time_s=Ts;
 report.trip_request_time_s=18.000;
-report.breaker_open_time_s=raw.time_s(find(raw.time_s>=18 & raw.VCB_A01_CLOSED==0,1,'first'));
+report.breaker_open_time_s=raw.time_s(firstOpen);
 report.trip_latch_at_request=logical(raw.FWP_HP_TRIP_LATCHED(idx18000));
 report.breaker_closed_at_18_079=logical(raw.VCB_A01_CLOSED(idx18079));
 report.breaker_closed_at_18_080=logical(raw.VCB_A01_CLOSED(idx18080));
 report.speed_rpm_at_trip_request=raw.FWP_HP_SPEED_RPM(idx18000);
-report.speed_rpm_at_breaker_open=raw.FWP_HP_SPEED_RPM(idx18080);
+report.speed_rpm_at_breaker_open=raw.FWP_HP_SPEED_RPM(firstOpen);
 report.speed_rpm_at_18_100=raw.FWP_HP_SPEED_RPM(idx18100);
 report.normal_stop_keeps_breaker_closed=true;
 report.scenario_answer_column_present=false;
@@ -141,7 +139,6 @@ fprintf(['TRIPLENS ECMS FWP-HP RAW EXPORTED\nROWS=%d\nDT=%.6f\n' ...
     'TRIP=18.000\nVCB_OPEN=%.3f\nRPM_TRIP=%.6f\nRPM_OPEN=%.6f\n'], ...
     height(raw),Ts,report.breaker_open_time_s,report.speed_rpm_at_trip_request, ...
     report.speed_rpm_at_breaker_open);
-
 close_system(modelName,0);
 end
 
@@ -166,8 +163,11 @@ end
 end
 
 function y=dataOnGrid(ts,t)
-% The operation model is fixed-step discrete at 1 ms. This interpolation is
-% only a robust extraction guard against Dataset timestamp representation.
-y=interp1(double(ts.Time(:)),double(ts.Data(:)),double(t),'previous','extrap');
+% Simulink can emit multiple event states at the same timestamp. ECMS RAW
+% must represent the final settled discrete state for that 1 ms timestamp.
+tt=double(ts.Time(:)); dd=double(ts.Data(:));
+[ut,lastIdx]=unique(tt,'last');
+ud=dd(lastIdx);
+y=interp1(ut,ud,double(t),'previous','extrap');
 y=double(y(:));
 end
