@@ -1,0 +1,63 @@
+name: GT Trip Physical Revalidation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ci/gt_trip_revalidation_20260909.py'
+      - '.github/workflows/gt-trip-physical-revalidation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: gt-trip-physical-revalidation
+  cancel-in-progress: true
+
+jobs:
+  gt-trip-revalidation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download validated 3-input TripTAC FMU
+        uses: actions/download-artifact@v4
+        with:
+          name: triplens-triptac-cosim-fmu-7
+          path: fmu_artifact
+          repository: khaku25/triplens-matlab-cosim-runner
+          run-id: 34308733698
+          github-token: ${{ github.token }}
+
+      - name: Install independent FMI runner
+        run: python3 -m pip install 'fmpy==0.3.22' 'numpy<3'
+
+      - name: Run GT-only 120-second post-trip physics test
+        shell: bash
+        run: |
+          set -euo pipefail
+          FMU="$(find fmu_artifact -name 'TripLens_CombinedCycle_TripTAC_CoSim.fmu' -print -quit)"
+          test -n "$FMU"
+          mkdir -p gt_trip_revalidation
+          python3 ci/gt_trip_revalidation_20260909.py \
+            --fmu "$FMU" \
+            --out gt_trip_revalidation \
+            --trip-at 5 \
+            --stop 125 \
+            --step 0.1 \
+            2>&1 | tee gt_trip_revalidation/execution.log
+          grep -q 'GT_TRIP_PHYSICAL_REVALIDATION_PASS' gt_trip_revalidation/execution.log
+
+      - name: Upload GT Trip evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gt-trip-physical-revalidation-${{ github.run_number }}
+          path: gt_trip_revalidation/
+          if-no-files-found: warn
+          retention-days: 30
