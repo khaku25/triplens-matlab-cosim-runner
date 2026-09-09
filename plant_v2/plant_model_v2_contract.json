@@ -1,5 +1,5 @@
 {
-  "schema_version": "2.0.0",
+  "schema_version": "2.1.0",
   "name": "TripLens Plant Model v2",
   "base_physics": {
     "repository": "Dwarf-Planet-Project/ThermoSysPro",
@@ -9,18 +9,31 @@
     "normal_gt_exhaust_temperature_k": 893.75,
     "normal_feedwater_pump_speed_rpm": 1400.0
   },
+  "canonical_semantics": {
+    "trip_definition": "TRIP success requires the associated breaker CLOSED feedback to become 0",
+    "gt_derate_definition": "606.94/893.75 -> 150/550 process-boundary reduction with 52GT remaining CLOSED",
+    "gt_trip_thermodynamic_shutdown": "PENDING_NATIVE_GT_SHUTDOWN_ADAPTER",
+    "st_trip_secondary_physics": "stTripCmd closes the native HP/MP turbine admission-valve command sources and ThermoSysPro solves rundown",
+    "protection_matrix": {
+      "GT_TRIP": "52GT OPEN + ST intertrip -> 52ST OPEN",
+      "ST_TRIP": "52ST OPEN only",
+      "DRUM_HH": "ST request only -> 52ST OPEN",
+      "DRUM_LL": "GT + ST requests -> 52GT OPEN + 52ST OPEN"
+    }
+  },
   "physics_modules": [
     {
       "id": "GT",
-      "status": "active",
+      "status": "process_boundary_active_native_trip_shutdown_pending",
       "binding": "gtExhaustFlowCmd + gtExhaustTemperatureCmd",
-      "notes": "Existing validated GT exhaust boundary interface."
+      "notes": "External GT exhaust boundary is validated for normal/derating experiments. It is not the canonical GT Trip definition."
     },
     {
       "id": "ST",
       "status": "active",
-      "binding": "inherited ThermoSysPro steam turbine/generator equations",
-      "feedback": ["stElectricalPower"]
+      "binding": "stTripCmd + inherited ThermoSysPro steam turbine/generator equations",
+      "feedback": ["stElectricalPower", "hpTurbineInletValveOpening", "mpTurbineInletValveOpening"],
+      "notes": "Validated ST secondary shutdown adapter closes HP/MP admission-valve commands after Trip request."
     },
     {
       "id": "HRSG",
@@ -43,7 +56,8 @@
       "speed_input": "fwpHpSpeedCmd",
       "feedback": ["fwpHpSpeedApplied", "fwpHpMassFlow"],
       "operation_logic": "ecms_pump_logic/build_fwp_hp_operation.m",
-      "operation_logic_status": "validated_on_windows_matlab_r2025b"
+      "operation_logic_status": "validated_on_windows_matlab_r2025b",
+      "command_to_physics": "thermo_speed_input_rpm -> fwpHpSpeedCmd -> PompeAlimHP.rpm_or_mpower"
     },
     {
       "id": "FWP_IP_DYNAMIC",
@@ -61,19 +75,20 @@
       "speed_source_replaced": "arretPomesBP",
       "speed_input": "fwpLpSpeedCmd",
       "feedback": ["fwpLpSpeedApplied", "fwpLpMassFlow"],
-      "operation_logic_status": "not_yet_implemented"
+      "operation_logic_status": "not_yet_implemented",
+      "notes": "Current base model uses PompeAlimBP in the simplified condenser/LP feed path; do not add a duplicate standalone condensate pump."
     },
     {
       "id": "CONDENSATE_PUMP_DYNAMIC",
       "status": "not_present_in_current_base_model",
       "binding": null,
-      "reason": "The pinned CombinedCycle_TripTAC currently exposes only the HP/MP/BP feedwater centrifugal pumps. Do not fabricate condensate-pump physics."
+      "reason": "No standalone condensate-pump object exists in the pinned base model. PompeAlimBP already occupies the simplified condenser/LP feed path."
     },
     {
       "id": "CW_PUMP_DYNAMIC",
       "status": "not_present_in_current_base_model",
       "binding": null,
-      "reason": "No dedicated circulating-water centrifugal pump is present in the pinned CombinedCycle_TripTAC. Add a physical component and circuit before enabling commands."
+      "reason": "Condenser cooling water is represented by SourceCaloporteur -> Condenseur -> PuitsCaloporteur; no dedicated CW pump object exists."
     }
   ],
   "operating_states": [
@@ -101,6 +116,12 @@
       "notes": "Do not create by forcing pressures, temperatures and speeds to zero."
     }
   ],
+  "time_contract": {
+    "thermo_nominal_exchange_s": 0.1,
+    "ecms_logic_step_s": 0.001,
+    "alarm_delay_policy": "elapsed simulation time, never sample count",
+    "rate_boundary_policy": "hold latest physical sample between synchronization points; do not claim sub-sample physical crossing time without supporting RAW"
+  },
   "command_contract": {
     "discrete_commands": [
       "START",
@@ -108,7 +129,8 @@
       "TRIP",
       "RESET",
       "BREAKER_OPEN",
-      "BREAKER_CLOSE"
+      "BREAKER_CLOSE",
+      "DERATE"
     ],
     "analog_commands": [
       "VALVE_POSITION"
@@ -116,7 +138,8 @@
     "rules": [
       "START never closes a feeder breaker implicitly.",
       "Normal STOP removes run enable but does not trip the feeder breaker.",
-      "TRIP may open the associated feeder breaker through ECMS logic and removes motor torque/run enable.",
+      "TRIP is not proven by analog process reduction; it requires associated breaker CLOSED feedback = 0.",
+      "DERATE changes a process boundary while the associated generator breaker remains CLOSED.",
       "RESET clears a latched state only when reset permissives are satisfied; it does not restart equipment.",
       "BREAKER_CLOSE and START are separate actions.",
       "VALVE_POSITION is enabled only after the target valve has an explicit validated physical binding."
