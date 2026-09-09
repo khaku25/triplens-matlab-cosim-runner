@@ -70,6 +70,35 @@ jobs:
           test -s plant_v2/build/normal100/plant_v2_normal100_res.mat
           grep -q "The simulation finished successfully" plant_v2/build/normal100/capture.log
 
+      - name: Build dedicated 300-to-1000 CVODE restart executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > plant_v2/build/normal100/build_restart.mos <<'MOS'
+          setCommandLineOptions("--std=3.4");
+          loadModel(Modelica,{"3.2.3"}); getErrorString();
+          loadFile("/repo/legacy_exact/vendor/ThermoSysPro/ThermoSysPro/package.mo"); getErrorString();
+          loadFile("/repo/plant_v2/modelica/TripLens_Plant_V2_Normal100.mo"); getErrorString();
+          cd("/repo/plant_v2/build/normal100");
+          buildModel(TripLens_Plant_V2_Normal100,
+            startTime=300,
+            stopTime=1000,
+            numberOfIntervals=7000,
+            tolerance=1e-3,
+            method="cvode",
+            outputFormat="csv",
+            fileNamePrefix="plant_v2_normal100_restart",
+            variableFilter="^(time|Debit\\.y\\.signal|Temperature\\.y\\.signal|arretPomes(HP|Mp|BP)\\.y\\.signal|Alternateur\\.Welec|Ballon(HP|MP|BP)\\.(P|zl))$");
+          getErrorString();
+          MOS
+          docker run --rm \
+            -v "$PWD/plant_v2/build/normal100/omhome:/root" \
+            -v "$PWD:/repo" \
+            -w /repo \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            omc /repo/plant_v2/build/normal100/build_restart.mos | tee plant_v2/build/normal100/build_restart.log
+          test -x plant_v2/build/normal100/plant_v2_normal100_restart
+
       - name: Restart from 300 s with CVODE and prove no-command hold
         shell: bash
         run: |
@@ -78,14 +107,11 @@ jobs:
             -v "$PWD/plant_v2/build/normal100:/work" \
             -w /work \
             openmodelica/openmodelica:v1.27.0-minimal \
-            ./plant_v2_normal100 \
-              -s=cvode \
+            ./plant_v2_normal100_restart \
               -iif=/work/plant_v2_normal100_res.mat \
               -iit=300 \
               -iim=none \
               -noEventEmit \
-              -override=startTime=300,stopTime=1000,stepSize=0.1 \
-              -outputFormat=csv \
               -r=/work/normal100_restart.csv \
               -lv=LOG_INIT,LOG_STATS | tee plant_v2/build/normal100/restart.log
           test -s plant_v2/build/normal100/normal100_restart.csv
@@ -100,8 +126,8 @@ jobs:
           d=Path('plant_v2/build/normal100')
           with (d/'normal100_restart.csv').open(newline='') as f:
               rows=list(csv.DictReader(f))
-          assert rows and abs(float(rows[0]['time'])-300)<1e-6
-          assert abs(float(rows[-1]['time'])-1000)<1e-6
+          assert rows and abs(float(rows[0]['time'])-300)<1e-6, rows[0]['time'] if rows else 'no rows'
+          assert abs(float(rows[-1]['time'])-1000)<1e-6, rows[-1]['time']
           constant={
               'Debit.y.signal':606.94,
               'Temperature.y.signal':893.75,
@@ -145,6 +171,7 @@ jobs:
             plant_v2/build/normal100/normal100_restart.csv
             plant_v2/build/normal100/normal100_report.json
             plant_v2/build/normal100/capture.log
+            plant_v2/build/normal100/build_restart.log
             plant_v2/build/normal100/restart.log
             plant_v2/modelica/TripLens_Plant_V2_Normal100.mo
           if-no-files-found: error
