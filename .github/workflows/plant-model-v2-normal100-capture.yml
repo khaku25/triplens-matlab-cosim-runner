@@ -2,7 +2,7 @@ name: Plant Model v2 NORMAL_100 Golden State
 
 on:
   push:
-    branches: [plant-model-v2]
+    branches: [integration/validated-stack-20260909]
     paths:
       - 'plant_v2/modelica/TripLens_Plant_V2_Normal100.mo'
       - 'plant_v2/scripts/install_normal100_windows.ps1'
