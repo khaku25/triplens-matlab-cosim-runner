@@ -30,7 +30,7 @@ jobs:
           git clone --no-checkout https://github.com/Dwarf-Planet-Project/ThermoSysPro.git fwp_warm/vendor/ThermoSysPro
           git -C fwp_warm/vendor/ThermoSysPro checkout --detach db81ae1b5a6a85f6c6c7693244cafa6087e18ff5
 
-      - name: Build static warm seed and off-design HP-FWP trip runtime
+      - name: Build HP-FWP test model with native discharge isolation
         shell: bash
         run: |
           set -euo pipefail
@@ -66,63 +66,33 @@ jobs:
           txt,n=pat.subn(repl,txt,count=1)
           if n!=1: raise SystemExit(f'HP speed source replacement count={n}')
 
-          # Capture NORMAL_100 with the pinned original static pump. The trip
-          # runtime below keeps all common process-state names so this solved
-          # snapshot can seed it, while adding only the off-design HP boundary.
-          Path('fwp_warm/build/TripLens_FWP_HP_WarmSeeded.mo').write_text(txt,encoding='utf-8')
-          txt=txt.replace(
-              'model TripLens_FWP_HP_WarmSeeded\n',
-              'model TripLens_FWP_HP_TripRuntime\n',1)
-          txt=txt.replace(
-              'end TripLens_FWP_HP_WarmSeeded;',
-              'end TripLens_FWP_HP_TripRuntime;',1)
-
-          # StaticCentrifugalPump is valid only while its positive-quadrant
-          # head curve intersects the live HP header. At about 1288 rpm the
-          # warm plant loses that algebraic operating point before Q reaches 0.
-          # Upgrade only the existing PompeAlimHP instance to ThermoSysPro's
-          # DynamicCentrifugalPump. Its positive-speed/positive-flow equations
-          # use the same a1/a3 and b1/b2 curves, while Qv*abs(Qv) gives the
-          # off-design/reverse quadrant needed to reach passive NRV closure.
+          # The native static pump changes its enthalpy transport equation at
+          # zero flow. Enable its built-in Qeps smoothing for the HP pump only;
+          # this adds no component and does not change the hydraulic topology.
           pump_pat=re.compile(
-              r'ThermoSysPro\.WaterSteam\.Machines\.StaticCentrifugalPump\s+PompeAlimHP\(.*?\)\s*'
-              r'annotation\s*\(Placement\(transformation\(extent=\{\{771,-60\},\{791,-40\}\},\s*rotation=0\)\)\);',
-              re.S)
-          pump_repl=(
-              'ThermoSysPro.WaterSteam.Machines.DynamicCentrifugalPump PompeAlimHP(\n'
-              '    VRotn=1400,\n'
-              '    a3=1600,\n'
-              '    a1=-28056.2,\n'
-              '    b1=-12.7952660447433,\n'
-              '    b2=3.61,\n'
-              '    steady_state_mech=true,\n'
-              '    dynamic_energy_balance=false,\n'
-              '    continuous_flow_reversal=true,\n'
-              '    Q(fixed=false),\n'
-              '    mode=1,\n'
-              '    C1(h_vol(start=561000.0)),\n'
-              '    C2(h_vol(start=630000.0)),\n'
-              '    Qv(start=0.0810383142105344),\n'
-              '    pro(d(start=929.0)),\n'
-              '    Pm(start=6774000))\n'
-              '    annotation (Placement(transformation(extent={{771,-60},{791,-40}}, rotation=0)));')
-          txt,n=pump_pat.subn(pump_repl,txt,count=1)
-          if n!=1: raise SystemExit(f'HP off-design pump upgrade count={n}')
+              r'(ThermoSysPro\.WaterSteam\.Machines\.StaticCentrifugalPump\s+PompeAlimHP\(\s*)')
+          txt,n=pump_pat.subn(
+              r'\1continuous_flow_reversal=true,\n    ',
+              txt,
+              count=1)
+          if n!=1: raise SystemExit(f'HP native flow-regularization count={n}')
 
-          # The native shaft-speed boundary lets the validated external R&D
-          # motor state continue to own RPM; no second motor is inserted.
-          # The native IdealCheckValve supplies passive discharge isolation.
+          # CombinedCycle_TripTAC has no HP-pump discharge non-return isolation.
+          # Its static pump loses the positive-flow operating point before Q=0,
+          # so an ideal Q<=0 closure acts too late. Use ThermoSysPro's native
+          # hysteretic CheckValve to close at low forward flow. The thresholds
+          # are virtual R&D settings and create no Competition/field tag.
           declaration=(
-              '  ThermoSysPro.ElectroMechanics.BoundaryConditions.SourceAngularVelocity\n'
-              '    tripLensFwpHpShaftSpeed;\n'
-              '  ThermoSysPro.WaterSteam.PressureLosses.IdealCheckValve\n'
+              '  ThermoSysPro.WaterSteam.PressureLosses.CheckValve\n'
               '    tripLensFwpHpDischargeNRV(\n'
-              '      dPOuvert=0.01,\n'
+              '      dPOuvert=100000,\n'
+              '      dPFerme=100,\n'
+              '      k=1000,\n'
               '      Qmin=1e-6,\n'
               '      continuous_flow_reversal=true)\n'
               '    "R&D generic HP FWP discharge isolation; not a Competition tag";\n')
           txt,n=re.subn(r'^equation\s*$', declaration+'equation', txt, count=1, flags=re.M)
-          if n!=1: raise SystemExit(f'HP shaft/NRV declaration count={n}')
+          if n!=1: raise SystemExit(f'HP discharge NRV declaration count={n}')
 
           old_discharge=(
               '  connect(Vanne_alimentationMPHP1.C1, PompeAlimHP.C2)\n'
@@ -134,16 +104,9 @@ jobs:
               raise SystemExit(f'HP discharge connection count={txt.count(old_discharge)}')
           txt=txt.replace(old_discharge,new_discharge,1)
 
-          old_speed=(
-              '  connect(PompeAlimHP.rpm_or_mpower, arretPomesHP.y)\n'
-              '    annotation (Line(points={{781,-61},{781,-80},{872.1,-80}}, smooth=Smooth.None));')
-          new_speed=(
-              '  connect(arretPomesHP.y, tripLensFwpHpShaftSpeed.IAngularVelocity);\n'
-              '  connect(tripLensFwpHpShaftSpeed.M, PompeAlimHP.M);')
-          if txt.count(old_speed)!=1:
-              raise SystemExit(f'HP shaft-speed connection count={txt.count(old_speed)}')
-          txt=txt.replace(old_speed,new_speed,1)
-          Path('fwp_warm/build/TripLens_FWP_HP_TripRuntime.mo').write_text(txt,encoding='utf-8')
+          if 'connect(PompeAlimHP.rpm_or_mpower, arretPomesHP.y)' not in txt:
+              raise SystemExit('native HP pump speed connection missing')
+          Path('fwp_warm/build/TripLens_FWP_HP_WarmSeeded.mo').write_text(txt,encoding='utf-8')
           Path('fwp_warm/results/contract.json').write_text(json.dumps({
               'base_model':'CombinedCycle_TripTAC',
               'thermosyspro_commit':'db81ae1b5a6a85f6c6c7693244cafa6087e18ff5',
@@ -151,18 +114,15 @@ jobs:
               'trip_request_s':300.0,
               'breaker_open_reference_s':300.08,
               'pump':'PompeAlimHP',
-              'pump_model':'ThermoSysPro.WaterSteam.Machines.DynamicCentrifugalPump',
-              'normal_quadrant_curve_preserved':'DynamicCentrifugalPump uses the original a1/a3 and b1/b2 coefficients in the positive quadrant',
-              'off_design_domain':'DynamicCentrifugalPump Qv*abs(Qv) formulation permits the Q=0 crossing required for passive NRV closure',
               'native_topology_modified':True,
               'new_motor_component_inserted':False,
               'native_discharge_check_valve_inserted':True,
-              'native_shaft_speed_boundary_inserted':True,
-              'r_and_d_discharge_isolation':'ThermoSysPro IdealCheckValve between PompeAlimHP and Vanne_alimentationMPHP1; generic virtual NRV, no field tag, not plant-approved',
-              'native_numerical_regularization':'PompeAlimHP uses ThermoSysPro DynamicCentrifugalPump with the original positive-quadrant coefficients plus continuous flow reversal',
+              'r_and_d_discharge_isolation':'ThermoSysPro CheckValve between PompeAlimHP and Vanne_alimentationMPHP1; generic virtual NRV, no field tag, not plant-approved',
+              'r_and_d_discharge_isolation_parameters':'dPOuvert=100000 Pa, dPFerme=100 Pa, k=1000; virtual R&D values pending plant/OEM data',
+              'native_numerical_regularization':'PompeAlimHP.continuous_flow_reversal=true; built-in Qeps smoothing only',
               'gt_boundary':'NORMAL_100 606.94 kg/s / 893.75 K',
               'coastdown_source':'R&D FWP virtual motor surrogate; tau approx 1 s, not plant-approved',
-              'initialization':'original static NORMAL_100 solved snapshot -> off-design HP trip runtime -> dedicated 300-420 CVODE executable'
+              'initialization':'emit-protected solved snapshot -> dedicated 300-420 CVODE executable with native discharge isolation'
           },indent=2),encoding='utf-8')
           print('FWP_HP_WARM_MODEL_BUILD_PASS')
           PY
@@ -214,12 +174,12 @@ jobs:
           setCommandLineOptions("--std=3.4");
           loadModel(Modelica,{"3.2.3"}); getErrorString();
           loadFile("/workspace/vendor/ThermoSysPro/ThermoSysPro/package.mo"); getErrorString();
-          loadFile("/workspace/build/TripLens_FWP_HP_TripRuntime.mo"); getErrorString();
+          loadFile("/workspace/build/TripLens_FWP_HP_WarmSeeded.mo"); getErrorString();
           cd("/workspace/results");
-          buildModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_HP_TripRuntime,
+          buildModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_HP_WarmSeeded,
             startTime=300, stopTime=420, numberOfIntervals=1200, tolerance=1e-3,
             method="cvode", outputFormat="csv", fileNamePrefix="fwp_hp_trip_restart",
-            variableFilter="^(time|arretPomesHP\\.y\\.signal|PompeAlimHP\\.(Q|VRot)|CapteurDebitEauHP\\.Measure\\.signal|Ballon(HP|MP|BP)\\.(P|zl)|tripLensFwpHpDischargeNRV\\.ouvert)$");
+            variableFilter="^(time|arretPomesHP\\.y\\.signal|PompeAlimHP\\.Q|CapteurDebitEauHP\\.Measure\\.signal|Ballon(HP|MP|BP)\\.(P|zl)|tripLensFwpHpDischargeNRV\\.ouvert)$");
           getErrorString();
           MOS
           docker run --rm \
@@ -243,7 +203,7 @@ jobs:
               -iim=none \
               -noEventEmit \
               -r=/work/fwp_hp_trip_raw.csv \
-              -lv=LOG_STATS | tee fwp_warm/results/trip_restart.log
+              -lv=LOG_INIT,LOG_STATS | tee fwp_warm/results/trip_restart.log
           test -s fwp_warm/results/fwp_hp_trip_raw.csv
           grep -q "The simulation finished successfully" fwp_warm/results/trip_restart.log
 
@@ -362,7 +322,7 @@ jobs:
               'status':'pass',
               'simulation_success':True,
               'warm_state_used':True,
-              'restart_method':'original static NORMAL_100 snapshot + off-design HP trip runtime + native discharge NRV + dedicated CVODE executable + iif/iit/iim=none',
+              'restart_method':'emit-protected snapshot + native hysteretic HP discharge NRV + dedicated CVODE executable + iif/iit/iim=none',
               'raw_start_s':t[0],
               'raw_end_s':t[-1],
               'raw_rows':len(rows),
@@ -404,6 +364,5 @@ jobs:
             fwp_warm/results/fwp_hp_trip_raw.csv
             fwp_warm/results/fwp_hp_warmstart_report.json
             fwp_warm/build/TripLens_FWP_HP_WarmSeeded.mo
-            fwp_warm/build/TripLens_FWP_HP_TripRuntime.mo
           if-no-files-found: warn
           retention-days: 30
