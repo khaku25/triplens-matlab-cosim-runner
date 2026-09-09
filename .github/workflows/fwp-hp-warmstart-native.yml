@@ -471,212 +471,23 @@ jobs:
           printf 'dassl-transition+fixed-closed-%s\n' "$chosen" \
             > fwp_warm/results/selected_solver.txt
 
-          python3 - "$chosen" <<'PY'
-          import csv,sys
-          from pathlib import Path
-          attempt=sys.argv[1]
-          paths=[
-              Path('fwp_warm/results/fwp_hp_transition_raw.csv'),
-              Path(f'fwp_warm/results/fwp_hp_closed_hold_{attempt}.csv'),
-          ]
-          canonical=[
-              'time','rpm_command','hp_boundary_flow','hp_process_flow',
-              'isolation_opening','BallonHP.zl','BallonHP.P',
-              'BallonMP.zl','BallonMP.P','BallonBP.zl','BallonBP.P',
-          ]
-          combined=[]
-          last_time=None
-
-          def resolve(header,label,candidates):
-              clean=[x.strip().strip('"') for x in header]
-              for name in candidates:
-                  if name in clean:
-                      print(path.name,label,'=',name)
-                      return clean.index(name)
-              raise SystemExit(
-                  f'{path}: missing {label}; available={clean}')
-
-          for path in paths:
-              with path.open(newline='',encoding='utf-8-sig') as f:
-                  r=csv.reader(f); current=next(r); rows=list(r)
-              indices={
-                  'time':resolve(current,'time',('time',)),
-                  'rpm_command':resolve(
-                      current,'rpm_command',
-                      ('arretPomesHP.y.signal','arretPomesHP.y',
-                       'PompeAlimHP.Vr','PompeAlimHP.rpm_or_mpower.signal')),
-                  'hp_boundary_flow':resolve(
-                      current,'hp_boundary_flow',
-                      ('tripLensFwpHpDischargeNRV.Q','PompeAlimHP.Q')),
-                  'hp_process_flow':resolve(
-                      current,'hp_process_flow',
-                      ('CapteurDebitEauHP.Measure.signal',)),
-                  'isolation_opening':resolve(
-                      current,'isolation_opening',
-                      ('tripLensFwpHpDischargeNRV.opening',)),
-                  'BallonHP.zl':resolve(current,'BallonHP.zl',('BallonHP.zl',)),
-                  'BallonHP.P':resolve(current,'BallonHP.P',('BallonHP.P',)),
-                  'BallonMP.zl':resolve(current,'BallonMP.zl',('BallonMP.zl',)),
-                  'BallonMP.P':resolve(current,'BallonMP.P',('BallonMP.P',)),
-                  'BallonBP.zl':resolve(current,'BallonBP.zl',('BallonBP.zl',)),
-                  'BallonBP.P':resolve(current,'BallonBP.P',('BallonBP.P',)),
-              }
-              for row in rows:
-                  t=float(row[indices['time']].strip('"'))
-                  if last_time is None or t > last_time + 1e-7:
-                      combined.append([row[indices[name]] for name in canonical])
-                      last_time=t
-          target=Path('fwp_warm/results/fwp_hp_trip_raw.csv')
-          with target.open('w',newline='',encoding='utf-8') as f:
-              w=csv.writer(f); w.writerow(canonical); w.writerows(combined)
-          print('COMBINED_RAW_ROWS',len(combined),'END_TIME',last_time)
-          PY
+          python3 plant_v2/scripts/normalize_fwp_hp_raw.py \
+            --transition fwp_warm/results/fwp_hp_transition_raw.csv \
+            --post "fwp_warm/results/fwp_hp_closed_hold_${chosen}.csv" \
+            --contract fwp_warm/results/contract.json \
+            --output fwp_warm/results/fwp_hp_trip_raw.csv \
+            --provenance fwp_warm/results/fwp_hp_raw_provenance.json
           test -s fwp_warm/results/fwp_hp_trip_raw.csv
 
       - name: Validate warm-started physical response
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          import csv,json,math
-
-          p=Path('fwp_warm/results/fwp_hp_trip_raw.csv')
-          selected_solver=Path('fwp_warm/results/selected_solver.txt').read_text(encoding='utf-8').strip()
-          with p.open(newline='',encoding='utf-8-sig') as f:
-              r=csv.reader(f)
-              raw_h=next(r)
-              rows=list(r)
-          h=[x.strip().strip('"') for x in raw_h]
-          if len(rows)<100:
-              raise SystemExit(f'RAW too short: {len(rows)} rows')
-
-          print('RAW_ROWS',len(rows),'RAW_COLUMNS',len(h))
-          relevant=[n for n in h if any(k in n for k in ('PompeAlimHP','arretPomesHP','BallonHP','BallonMP','BallonBP','CapteurDebitEauHP','tripLensFwpHpDischargeNRV'))]
-          print('RELEVANT_HEADERS',json.dumps(relevant,ensure_ascii=False))
-
-          def find_col(label, exact=(), contains_all=(), suffixes=()):
-              for c in exact:
-                  if c in h:
-                      print(label,'=',c)
-                      return h.index(c)
-              for i,n in enumerate(h):
-                  if contains_all and all(k in n for k in contains_all):
-                      if not suffixes or any(n.endswith(s) for s in suffixes):
-                          print(label,'=',n)
-                          return i
-              raise SystemExit(f'missing {label}; relevant headers={relevant}')
-
-          c_time=find_col('time',exact=('time',))
-          c_rpm=find_col(
-              'rpm',
-              exact=('rpm_command','arretPomesHP.y.signal','arretPomesHP.y','PompeAlimHP.Vr','PompeAlimHP.rpm_or_mpower.signal'),
-              contains_all=('arretPomesHP',), suffixes=('.signal','.y'))
-          c_boundary_q=find_col(
-              'hp_boundary_flow', exact=('hp_boundary_flow',))
-          c_process_q=find_col(
-              'hp_process_flow', exact=('hp_process_flow',))
-          c_nrv=find_col(
-              'r_and_d_discharge_isolation',
-              exact=('isolation_opening','tripLensFwpHpDischargeNRV.opening'),
-              contains_all=('tripLensFwpHpDischargeNRV',), suffixes=('.opening',))
-
-          drum_names=('BallonHP.zl','BallonHP.P','BallonMP.zl','BallonMP.P','BallonBP.zl','BallonBP.P')
-          drum_cols=[(n,h.index(n)) for n in drum_names if n in h]
-          if not drum_cols:
-              raise SystemExit('no native drum state columns in RAW')
-
-          t=[float(x[c_time]) for x in rows]
-          if not all(math.isfinite(x) for x in t):
-              raise SystemExit('non-finite time')
-          if t[0] > 300.05 or t[-1] < 419.8:
-              raise SystemExit(f'incomplete time range {t[0]}..{t[-1]}')
-          if any(t[i+1] < t[i] for i in range(len(t)-1)):
-              raise SystemExit('time is not monotonic')
-
-          def near(x):
-              return min(range(len(t)),key=lambda k:abs(t[k]-x))
-
-          sample_times=[300,300.1,300.5,301,302,305,310,330,360,419.9]
-          samples={}
-          finite=True
-          for ts in sample_times:
-              j=near(ts)
-              vals={
-                  'time_s':t[j],
-                  'rpm_command':float(rows[j][c_rpm]),
-                  'hp_boundary_flow':float(rows[j][c_boundary_q]),
-                  'hp_process_flow':float(rows[j][c_process_q]),
-                  'isolation_opening':float(rows[j][c_nrv]),
-              }
-              for name,i in drum_cols:
-                  vals[name]=float(rows[j][i])
-              finite=finite and all(math.isfinite(v) for v in vals.values())
-              samples[str(ts)]=vals
-
-          coast=[samples[str(x)]['rpm_command'] for x in [300.1,300.5,301,302,305,310]]
-          if not all(coast[i+1] <= coast[i]+1e-6 for i in range(len(coast)-1)):
-              raise SystemExit('RPM coastdown not monotonic: '+str(coast))
-          if samples['310']['rpm_command'] > 5:
-              raise SystemExit('RPM did not reach zero-speed gate: '+str(samples['310']['rpm_command']))
-          if not finite:
-              raise SystemExit('non-finite major variable')
-
-          if samples['300']['isolation_opening'] < 0.99:
-              raise SystemExit('HP discharge isolation is not fully open at the NORMAL_100 boundary')
-          opening_after=[samples[str(x)]['isolation_opening'] for x in [301,302,305,310]]
-          if max(opening_after) > 0.01:
-              raise SystemExit('HP discharge isolation did not close during pump coastdown: '+str(opening_after))
-          post_trip_boundary_flow=[
-              samples[str(x)]['hp_boundary_flow']
-              for x in [301,302,305,310,330]]
-          if max(abs(q) for q in post_trip_boundary_flow) > 0.2:
-              raise SystemExit(
-                  'regularized HP discharge isolation leakage too large: '
-                  +str(post_trip_boundary_flow))
-
-          # Demand a real downstream process response separately from the
-          # bounded R&D isolation flow.
-          q0=samples['300']['hp_process_flow']
-          q_candidates=[
-              samples[str(x)]['hp_process_flow']
-              for x in [301,302,305,310,330]]
-          max_q_delta=max(abs(q-q0) for q in q_candidates)
-          scale=max(abs(q0),1.0)
-          if max_q_delta <= max(1e-6,1e-4*scale):
-              raise SystemExit(
-                  f'native feedwater process flow did not respond: '
-                  f'q0={q0}, max_delta={max_q_delta}')
-
-          report={
-              'status':'pass',
-              'simulation_success':True,
-              'warm_state_used':True,
-              'restart_method':f'emit-protected snapshot + R&D regularized HP discharge isolation + {selected_solver} + iif/iit/iim=none',
-              'selected_solver':selected_solver,
-              'raw_start_s':t[0],
-              'raw_end_s':t[-1],
-              'raw_rows':len(rows),
-              'major_variables_finite':True,
-              'rpm_coastdown_monotonic':True,
-              'native_process_response':True,
-              'native_process_flow_max_delta':max_q_delta,
-              'r_and_d_discharge_isolation_closed_after_trip':True,
-              'post_trip_isolation_flow_bound_kg_s':0.2,
-              'resolved_columns':{
-                  'rpm':h[c_rpm],
-                  'boundary_flow':h[c_boundary_q],
-                  'process_flow':h[c_process_q],
-                  'isolation':h[c_nrv],
-                  'drums':[n for n,_ in drum_cols],
-              },
-              'samples':samples,
-              'guardrail':'FWP motor coastdown constants and fixed-density numerical regularizers are R&D settings, not plant-approved settings.'
-          }
-          Path('fwp_warm/results/fwp_hp_warmstart_report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
-          print('FWP_HP_WARMSTART_NATIVE_PASS')
-          print(json.dumps(report,indent=2))
-          PY
+          python3 plant_v2/scripts/validate_fwp_hp_raw.py \
+            --raw fwp_warm/results/fwp_hp_trip_raw.csv \
+            --contract fwp_warm/results/contract.json \
+            --provenance fwp_warm/results/fwp_hp_raw_provenance.json \
+            --report fwp_warm/results/fwp_hp_warmstart_report.json
 
       - name: Normalize generated evidence permissions
         if: always()
@@ -707,6 +518,7 @@ jobs:
             fwp_warm/results/fwp_hp_closed_hold_info.json
             fwp_warm/results/fwp_hp_closed_hold*.c
             fwp_warm/results/fwp_hp_trip_raw.csv
+            fwp_warm/results/fwp_hp_raw_provenance.json
             fwp_warm/results/fwp_hp_warmstart_report.json
             fwp_warm/build/TripLens_FWP_HP_WarmSeeded.mo
             fwp_warm/build/TripLens_FWP_HP_TripRuntime.mo
