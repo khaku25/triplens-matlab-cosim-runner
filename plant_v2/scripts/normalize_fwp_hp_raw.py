@@ -118,6 +118,76 @@ def _format(value: float) -> str:
     return format(value, ".17g")
 
 
+def _resample_to_physics_grid(
+    records: Sequence[Mapping[str, float]], step_s: float = 0.1
+) -> List[Dict[str, float]]:
+    """Align adaptive/event solver output to the versioned physics RAW clock.
+
+    OpenModelica can emit an event timestamp in place of one requested output
+    point (for example 300.15 s instead of 300.2 s). The solver still advances
+    with its configured maximum step. Canonical RAW is therefore reconstructed
+    only from adjacent finite solver results by linear interpolation; no tag,
+    command, alarm, or scenario result is synthesized.
+    """
+    if len(records) < 2:
+        raise SystemExit("at least two solver records are required to resample")
+    if not math.isfinite(step_s) or step_s <= 0.0:
+        raise SystemExit(f"invalid physics RAW step: {step_s}")
+
+    start_s = float(records[0]["time"])
+    end_s = float(records[-1]["time"])
+    interval_count = int(round((end_s - start_s) / step_s))
+    if abs(start_s + interval_count * step_s - end_s) > 1e-7:
+        raise SystemExit(
+            f"solver evidence range {start_s}..{end_s} does not align "
+            f"to the {step_s} s physics RAW clock"
+        )
+
+    result: List[Dict[str, float]] = []
+    left_index = 0
+    tolerance = 1e-9
+    for index in range(interval_count + 1):
+        target_s = start_s + index * step_s
+        while (
+            left_index + 1 < len(records)
+            and float(records[left_index + 1]["time"]) < target_s - tolerance
+        ):
+            left_index += 1
+
+        left = records[left_index]
+        left_time = float(left["time"])
+        if abs(left_time - target_s) <= tolerance:
+            record = {name: float(left[name]) for name in CANONICAL_FIELDS}
+            record["time"] = target_s
+            result.append(record)
+            continue
+
+        if left_index + 1 >= len(records):
+            raise SystemExit(f"cannot bracket physics RAW time {target_s}")
+        right = records[left_index + 1]
+        right_time = float(right["time"])
+        if abs(right_time - target_s) <= tolerance:
+            record = {name: float(right[name]) for name in CANONICAL_FIELDS}
+            record["time"] = target_s
+            result.append(record)
+            continue
+        if not (left_time < target_s < right_time):
+            raise SystemExit(
+                f"invalid solver bracket for {target_s}: "
+                f"{left_time}..{right_time}"
+            )
+
+        fraction = (target_s - left_time) / (right_time - left_time)
+        record = {"time": target_s}
+        for name in CANONICAL_FIELDS[1:]:
+            record[name] = float(left[name]) + fraction * (
+                float(right[name]) - float(left[name])
+            )
+        result.append(record)
+
+    return result
+
+
 def main() -> int:
     args = _arguments()
     contract = json.loads(args.contract.read_text(encoding="utf-8"))
@@ -206,6 +276,17 @@ def main() -> int:
     if not combined:
         raise SystemExit("no canonical RAW rows were produced")
 
+    solver_rows = len(combined)
+    solver_max_output_gap_s = max(
+        combined[index]["time"] - combined[index - 1]["time"]
+        for index in range(1, len(combined))
+    )
+    combined = _resample_to_physics_grid(combined, step_s=0.1)
+    canonical_max_output_gap_s = max(
+        combined[index]["time"] - combined[index - 1]["time"]
+        for index in range(1, len(combined))
+    )
+
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=CANONICAL_FIELDS)
@@ -223,6 +304,19 @@ def main() -> int:
         "raw_rows": len(combined),
         "raw_start_s": combined[0]["time"],
         "raw_end_s": combined[-1]["time"],
+        "physics_raw_step_s": 0.1,
+        "solver_rows": solver_rows,
+        "solver_max_output_gap_s": solver_max_output_gap_s,
+        "canonical_max_output_gap_s": canonical_max_output_gap_s,
+        "time_alignment": {
+            "method": "linear interpolation between adjacent solver outputs",
+            "reason": (
+                "OpenModelica event output may replace a requested 0.1 s "
+                "sample; the solver integration step remains independently "
+                "bounded by the workflow."
+            ),
+            "scenario_or_alarm_fields_created": False,
+        },
         "post_transition_numerical_leak_kg_s": post_qleak,
         "segments": segment_sources,
         "guardrail": (
