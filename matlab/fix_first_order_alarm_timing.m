@@ -1,7 +1,7 @@
 function fix_first_order_alarm_timing()
-%FIX_FIRST_ORDER_ALARM_TIMING Use simulation time, not sample counts, for
-% Layer1 drum H/HH/L/LL delays. This keeps a 0.5 s delay equal to 0.5 s when
-% Thermo updates at 0.1 s and ECMS protection executes at 0.001 s.
+%FIX_FIRST_ORDER_ALARM_TIMING Make Layer1 H/HH/L/LL timing independent of
+% the 0.1 s Thermo communication rate. Raw levels are held onto the 1 ms ECMS
+% protection grid and delay persistence is measured against a 1 ms Digital Clock.
 
 repoRoot=getenv('GITHUB_WORKSPACE');
 if isempty(repoRoot), repoRoot=fileparts(fileparts(mfilename('fullpath'))); end
@@ -30,39 +30,74 @@ logic=[sub '/Logic'];
 assert(getSimulinkBlockHandle(sub)~=-1 && getSimulinkBlockHandle(logic)~=-1, ...
     'TripLens:MissingLayer1Logic','First_Order_Drum_Alarms/Logic is missing.');
 
+% Upsample/hold the 0.1 s Thermo raw quantities onto the 1 ms protection grid.
+holdNames={'HP_Level_1ms','IP_Level_1ms','LP_Level_1ms'};
+inputNames={'HP_Drum_Level','IP_Drum_Level','LP_Drum_Level'};
+try
+    logicPorts=get_param(logic,'PortHandles');
+    for k=1:min(3,numel(logicPorts.Inport))
+        old=get_param(logicPorts.Inport(k),'Line');
+        if old~=-1, delete_line(old); end
+    end
+catch
+end
+for k=1:3
+    hp=[sub '/' holdNames{k}];
+    if getSimulinkBlockHandle(hp)==-1
+        add_block('simulink/Discrete/Zero-Order Hold',hp,'SampleTime','0.001', ...
+            'Position',[170 45+(k-1)*70 235 70+(k-1)*70]);
+    else
+        set_param(hp,'SampleTime','0.001');
+    end
+    % Remove any stale internal lines on the hold block before rewiring.
+    try
+        ph=get_param(hp,'PortHandles');
+        old=get_param(ph.Inport(1),'Line'); if old~=-1, delete_line(old); end
+        old=get_param(ph.Outport(1),'Line'); if old~=-1, delete_line(old); end
+    catch
+    end
+    add_line(sub,[inputNames{k} '/1'],[holdNames{k} '/1'],'autorouting','on');
+end
+
 clock=[sub '/Simulation_Time'];
 if getSimulinkBlockHandle(clock)==-1
-    add_block('simulink/Sources/Clock',clock,'Position',[25 260 95 280]);
+    add_block('simulink/Sources/Digital Clock',clock,'SampleTime','0.001', ...
+        'Position',[170 270 250 295]);
+else
+    set_param(clock,'SampleTime','0.001');
 end
+
 rt=sfroot; chart=rt.find('-isa','Stateflow.EMChart','Path',logic);
 assert(~isempty(chart),'TripLens:AlarmFunction','Could not resolve Layer1 MATLAB Function.');
 chart.Script=clockBasedCode(T);
 set_param(modelName,'SimulationCommand','update');
 
-% Recreate only the internal Clock -> fourth function-input line.
+% Recreate all four function inputs on a single 1 ms rate.
+for k=1:3
+    add_line(sub,[holdNames{k} '/1'],['Logic/' num2str(k)],'autorouting','on');
+end
 try
-    ph=get_param(logic,'PortHandles');
-    if numel(ph.Inport)>=4
-        old=get_param(ph.Inport(4),'Line');
+    logicPorts=get_param(logic,'PortHandles');
+    if numel(logicPorts.Inport)>=4
+        old=get_param(logicPorts.Inport(4),'Line');
         if old~=-1, delete_line(old); end
     end
 catch
 end
 add_line(sub,'Simulation_Time/1','Logic/4','autorouting','on');
 set_param(modelName,'SimulationCommand','update');
-set_param(sub,'Description',['Layer1 model-backed drum H/HH/L/LL. Delay uses simulation absolute time, ' ...
-    'so 0.5 s remains 0.5 s across the 0.1 s Thermo / 1 ms ECMS rate boundary.']);
+set_param(sub,'Description',['Layer1 model-backed drum H/HH/L/LL. Thermo raw levels are held on a 1 ms grid; ' ...
+    'delay uses 1 ms simulation time so 0.5 s remains exactly 0.5 s across the rate boundary.']);
 save_system(modelName,modelPath);
 
 outDir=fullfile(repoRoot,'outputs'); if ~isfolder(outDir), mkdir(outDir); end
-% Refresh the proof artifact after the timing correction so the uploaded SLX
-% is exactly the clock-timed model, not the pre-correction copy.
 copyfile(modelPath,fullfile(outDir,[modelName '_closed_loop.slx']),'f');
 
 report=struct();
 report.model=modelName;
-report.layer1_timing='SIMULATION_CLOCK_DURATION';
+report.layer1_timing='DIGITAL_CLOCK_DURATION';
 report.thermo_nominal_sample_s=0.1;
+report.layer1_hold_sample_s=0.001;
 report.ecms_logic_sample_s=0.001;
 report.settings_file=settingsPath;
 report.alarm_count=height(T);
@@ -71,7 +106,7 @@ report.note='Thresholds are model absolute values, not approved plant settings.'
 fid=fopen(fullfile(outDir,'first_order_alarm_timing_report.json'),'w','n','UTF-8');
 assert(fid>=0,'TripLens:ReportWrite');
 fprintf(fid,'%s',jsonencode(report,'PrettyPrint',true)); fclose(fid);
-fprintf('TRIPLENS LAYER1 CLOCK-TIMING INSTALLED\nALARMS=%d\n',height(T));
+fprintf('TRIPLENS LAYER1 1MS CLOCK-TIMING INSTALLED\nALARMS=%d\n',height(T));
 end
 
 function code=clockBasedCode(T)
