@@ -90,6 +90,18 @@ jobs:
           if n!=1:
               raise SystemExit(f'HP downstream valve flow-regularization count={n}')
 
+          # The HP pump inlet pressure-loss element shares the same reversing
+          # flow and must use the same continuous enthalpy transport equation.
+          inlet_loss_pat=re.compile(
+              r'(ThermoSysPro\.WaterSteam\.PressureLosses\.PipePressureLoss\s+'
+              r'perteChargeK3\(\s*)')
+          txt,n=inlet_loss_pat.subn(
+              r'\1continuous_flow_reversal=true,\n    ',
+              txt,
+              count=1)
+          if n!=1:
+              raise SystemExit(f'HP inlet loss flow-regularization count={n}')
+
           # CombinedCycle_TripTAC has no HP-pump discharge non-return isolation.
           # The static pump loses its positive-flow operating point before Q=0.
           # Use a continuous, speed-coupled reverse-leak resistance so the DAE
@@ -156,7 +168,7 @@ jobs:
               'r_and_d_regularized_isolation_adapter_inserted':True,
               'r_and_d_discharge_isolation':'TripLensFwpHpRegularizedNRV between PompeAlimHP and Vanne_alimentationMPHP1; speed-coupled continuous resistance, no field/Competition tag',
               'r_and_d_discharge_isolation_parameters':'VrOpen=1399 rpm, VrClosed=1300 rpm, Rclosed=2e8 Pa.s/kg; virtual R&D values pending plant/OEM data',
-              'native_numerical_regularization':'PompeAlimHP and Vanne_alimentationMPHP1 continuous_flow_reversal=true; library Qeps smoothing only',
+              'native_numerical_regularization':'PompeAlimHP, perteChargeK3, and Vanne_alimentationMPHP1 continuous_flow_reversal=true; library Qeps smoothing only',
               'gt_boundary':'NORMAL_100 606.94 kg/s / 893.75 K',
               'coastdown_source':'R&D FWP virtual motor surrogate; tau approx 1 s, not plant-approved',
               'initialization':'emit-protected solved snapshot -> dedicated 300-420 CVODE executable with regularized discharge isolation'
