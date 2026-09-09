@@ -163,11 +163,12 @@ end
 end
 
 function y=dataOnGrid(ts,t)
-% Simulink can emit multiple event states at the same timestamp. ECMS RAW
-% must represent the final settled discrete state for that 1 ms timestamp.
+% Simulink can emit multiple event states at one timestamp. The existing
+% validated operation timeline uses valueAt(), which selects the first exact
+% event state. RAW extraction intentionally follows the same convention.
 tt=double(ts.Time(:)); dd=double(ts.Data(:));
-[ut,lastIdx]=unique(tt,'last');
-ud=dd(lastIdx);
+[ut,firstIdx]=unique(tt,'first');
+ud=dd(firstIdx);
 y=interp1(ut,ud,double(t),'previous','extrap');
 y=double(y(:));
 end
