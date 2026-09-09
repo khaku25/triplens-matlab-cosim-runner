@@ -17,7 +17,7 @@ concurrency:
 jobs:
   fwp-hp-warmstart-native:
     runs-on: ubuntu-24.04
-    timeout-minutes: 75
+    timeout-minutes: 105
     steps:
       - uses: actions/checkout@v4
 
@@ -111,6 +111,13 @@ jobs:
           regularized_hp_valve=(
               'TripLensFwpHpRegularizedControlValve '
               'Vanne_alimentationMPHP1(')
+          native_hp_drum_feedwater_valve=(
+              'ThermoSysPro.WaterSteam.PressureLosses.ControlValve '
+              'vanne_alimentationHP(')
+          regularized_hp_drum_feedwater_valve=(
+              'TripLensFwpHpRegularizedControlValve '
+              'vanne_alimentationHP(\n'
+              '      rhoFixed=670.8589892088744,')
           if txt.count(native_hp_valve)!=1:
               raise SystemExit(f'HP valve type replacement count={txt.count(native_hp_valve)}')
           # CombinedCycle_TripTAC has no HP-pump discharge non-return isolation.
@@ -260,6 +267,14 @@ jobs:
           # replaces only the HP valve equation, and imports the solved state.
           warm_txt=txt
           runtime_txt=txt.replace(native_hp_valve,regularized_hp_valve,1)
+          if runtime_txt.count(native_hp_drum_feedwater_valve)!=1:
+              raise SystemExit(
+                  f'HP drum feedwater valve type replacement count='
+                  f'{runtime_txt.count(native_hp_drum_feedwater_valve)}')
+          runtime_txt=runtime_txt.replace(
+              native_hp_drum_feedwater_valve,
+              regularized_hp_drum_feedwater_valve,
+              1)
           native_hp_steam_pipe=(
               'ThermoSysPro.WaterSteam.PressureLosses.PipePressureLoss '
               'lumpedStraightPipeK2(')
@@ -309,6 +324,8 @@ jobs:
               'native_discharge_check_valve_inserted':False,
               'r_and_d_regularized_isolation_adapter_inserted':True,
               'r_and_d_hp_valve_regularized':True,
+              'r_and_d_hp_drum_feedwater_valve_regularized':True,
+              'hp_drum_feedwater_valve_fixed_density_kg_m3':670.8589892088744,
               'r_and_d_hp_steam_pipe_regularized':True,
               'hp_steam_pipe_fixed_density_kg_m3':10.426265903235906,
               'post_transition_fixed_closed_topology':True,
@@ -318,7 +335,7 @@ jobs:
               'hp_valve_fixed_density_kg_m3':926.1664940825133,
               'r_and_d_discharge_isolation':'TripLensFwpHpRegularizedNRV between PompeAlimHP and Vanne_alimentationMPHP1; speed-coupled continuous resistance, no field/Competition tag',
               'r_and_d_discharge_isolation_parameters':'VrOpen=1399 rpm, VrClosed=1300 rpm, Rclosed=2e10 Pa.s/kg; virtual R&D values pending plant/OEM data',
-              'native_numerical_regularization':'PompeAlimHP and perteChargeK3 continuous_flow_reversal=true; HP valve keeps native Cv law; lumpedStraightPipeK2 keeps native K law with NORMAL_100/t=301 fixed densities to avoid invalid IF97 solver trial states',
+              'native_numerical_regularization':'PompeAlimHP and perteChargeK3 continuous_flow_reversal=true; HP isolation and drum-feedwater valves keep native Cv laws; lumpedStraightPipeK2 keeps native K law with NORMAL_100/t=301 fixed densities to avoid invalid IF97 solver trial states',
               'gt_boundary':'NORMAL_100 606.94 kg/s / 893.75 K',
               'coastdown_source':'R&D FWP virtual motor surrogate; tau approx 1 s, not plant-approved',
               'initialization':'native 0-300 seed -> regularized 300-301 transition -> state-continuous fixed-isolation 301-420 runtime'
@@ -439,7 +456,7 @@ jobs:
             init_method="${attempt%%_*}"
             solver="${attempt#*_}"
             set +e
-            timeout --signal=TERM --kill-after=15s 30m docker run --rm \
+            timeout --signal=TERM --kill-after=15s 75m docker run --rm \
               --name "fwp-hp-closed-${attempt}" \
               -v "$PWD/fwp_warm/results:/work" \
               -w /work \
@@ -704,6 +721,8 @@ jobs:
             fwp_warm/results/fwp_hp_transition_state_res.mat
             fwp_warm/results/fwp_hp_transition_raw.csv
             fwp_warm/results/fwp_hp_closed_hold_*.csv
+            fwp_warm/results/fwp_hp_closed_hold_info.json
+            fwp_warm/results/fwp_hp_closed_hold*.c
             fwp_warm/results/fwp_hp_trip_raw.csv
             fwp_warm/results/fwp_hp_warmstart_report.json
             fwp_warm/build/TripLens_FWP_HP_WarmSeeded.mo
