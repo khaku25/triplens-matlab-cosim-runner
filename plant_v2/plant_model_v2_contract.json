@@ -1,0 +1,154 @@
+{
+  "schema_version": "2.1.0",
+  "name": "TripLens Plant Model v2",
+  "base_physics": {
+    "repository": "Dwarf-Planet-Project/ThermoSysPro",
+    "commit": "db81ae1b5a6a85f6c6c7693244cafa6087e18ff5",
+    "class": "ThermoSysPro.Examples.CombinedCyclePowerPlant.CombinedCycle_TripTAC",
+    "normal_gt_exhaust_flow_kg_s": 606.94,
+    "normal_gt_exhaust_temperature_k": 893.75,
+    "normal_feedwater_pump_speed_rpm": 1400.0
+  },
+  "canonical_semantics": {
+    "trip_definition": "TRIP success requires the associated breaker CLOSED feedback to become 0",
+    "gt_derate_definition": "606.94/893.75 -> 150/550 process-boundary reduction with 52GT remaining CLOSED",
+    "gt_trip_thermodynamic_shutdown": "PENDING_NATIVE_GT_SHUTDOWN_ADAPTER",
+    "st_trip_secondary_physics": "stTripCmd closes the native HP/MP turbine admission-valve command sources and ThermoSysPro solves rundown",
+    "protection_matrix": {
+      "GT_TRIP": "52GT OPEN + ST intertrip -> 52ST OPEN",
+      "ST_TRIP": "52ST OPEN only",
+      "DRUM_HH": "ST request only -> 52ST OPEN",
+      "DRUM_LL": "GT + ST requests -> 52GT OPEN + 52ST OPEN"
+    }
+  },
+  "physics_modules": [
+    {
+      "id": "GT",
+      "status": "process_boundary_active_native_trip_shutdown_pending",
+      "binding": "gtExhaustFlowCmd + gtExhaustTemperatureCmd",
+      "notes": "External GT exhaust boundary is validated for normal/derating experiments. It is not the canonical GT Trip definition."
+    },
+    {
+      "id": "ST",
+      "status": "active",
+      "binding": "stTripCmd + inherited ThermoSysPro steam turbine/generator equations",
+      "feedback": ["stElectricalPower", "hpTurbineInletValveOpening", "mpTurbineInletValveOpening"],
+      "notes": "Validated ST secondary shutdown adapter closes HP/MP admission-valve commands after Trip request."
+    },
+    {
+      "id": "HRSG",
+      "status": "active",
+      "binding": "inherited ThermoSysPro HP/MP/BP drum and heat-exchanger equations",
+      "feedback": [
+        "hpDrumLevel",
+        "ipDrumLevel",
+        "lpDrumLevel",
+        "hpDrumPressure",
+        "ipDrumPressure",
+        "lpDrumPressure"
+      ]
+    },
+    {
+      "id": "FWP_HP_DYNAMIC",
+      "status": "active",
+      "thermosyspro_component": "PompeAlimHP",
+      "speed_source_replaced": "arretPomesHP",
+      "speed_input": "fwpHpSpeedCmd",
+      "feedback": ["fwpHpSpeedApplied", "fwpHpMassFlow"],
+      "operation_logic": "ecms_pump_logic/build_fwp_hp_operation.m",
+      "operation_logic_status": "validated_on_windows_matlab_r2025b",
+      "command_to_physics": "thermo_speed_input_rpm -> fwpHpSpeedCmd -> PompeAlimHP.rpm_or_mpower"
+    },
+    {
+      "id": "FWP_IP_DYNAMIC",
+      "status": "physics_input_active_logic_pending",
+      "thermosyspro_component": "PompeAlimMP",
+      "speed_source_replaced": "arretPomesMp",
+      "speed_input": "fwpIpSpeedCmd",
+      "feedback": ["fwpIpSpeedApplied", "fwpIpMassFlow"],
+      "operation_logic_status": "not_yet_implemented"
+    },
+    {
+      "id": "FWP_LP_DYNAMIC",
+      "status": "physics_input_active_logic_pending",
+      "thermosyspro_component": "PompeAlimBP",
+      "speed_source_replaced": "arretPomesBP",
+      "speed_input": "fwpLpSpeedCmd",
+      "feedback": ["fwpLpSpeedApplied", "fwpLpMassFlow"],
+      "operation_logic_status": "not_yet_implemented",
+      "notes": "Current base model uses PompeAlimBP in the simplified condenser/LP feed path; do not add a duplicate standalone condensate pump."
+    },
+    {
+      "id": "CONDENSATE_PUMP_DYNAMIC",
+      "status": "not_present_in_current_base_model",
+      "binding": null,
+      "reason": "No standalone condensate-pump object exists in the pinned base model. PompeAlimBP already occupies the simplified condenser/LP feed path."
+    },
+    {
+      "id": "CW_PUMP_DYNAMIC",
+      "status": "not_present_in_current_base_model",
+      "binding": null,
+      "reason": "Condenser cooling water is represented by SourceCaloporteur -> Condenseur -> PuitsCaloporteur; no dedicated CW pump object exists."
+    }
+  ],
+  "operating_states": [
+    {
+      "id": "NORMAL_100",
+      "status": "active",
+      "source": "normal-hold golden state",
+      "windows_state_path": "C:/TripLensWarm/normal_hold_res.mat",
+      "notes": "Nominal GT exhaust inputs held constant; no scheduled trip."
+    },
+    {
+      "id": "NORMAL_75",
+      "status": "requires_physical_definition_and_capture",
+      "windows_state_path": null
+    },
+    {
+      "id": "NORMAL_50",
+      "status": "requires_physical_definition_and_capture",
+      "windows_state_path": null
+    },
+    {
+      "id": "COLD_START",
+      "status": "requires_startup_model_and_consistent_state_capture",
+      "windows_state_path": null,
+      "notes": "Do not create by forcing pressures, temperatures and speeds to zero."
+    }
+  ],
+  "time_contract": {
+    "thermo_nominal_exchange_s": 0.1,
+    "ecms_logic_step_s": 0.001,
+    "alarm_delay_policy": "elapsed simulation time, never sample count",
+    "rate_boundary_policy": "hold latest physical sample between synchronization points; do not claim sub-sample physical crossing time without supporting RAW"
+  },
+  "command_contract": {
+    "discrete_commands": [
+      "START",
+      "STOP",
+      "TRIP",
+      "RESET",
+      "BREAKER_OPEN",
+      "BREAKER_CLOSE",
+      "DERATE"
+    ],
+    "analog_commands": [
+      "VALVE_POSITION"
+    ],
+    "rules": [
+      "START never closes a feeder breaker implicitly.",
+      "Normal STOP removes run enable but does not trip the feeder breaker.",
+      "TRIP is not proven by analog process reduction; it requires associated breaker CLOSED feedback = 0.",
+      "DERATE changes a process boundary while the associated generator breaker remains CLOSED.",
+      "RESET clears a latched state only when reset permissives are satisfied; it does not restart equipment.",
+      "BREAKER_CLOSE and START are separate actions.",
+      "VALVE_POSITION is enabled only after the target valve has an explicit validated physical binding."
+    ]
+  },
+  "blind_test_policy": {
+    "normal_no_command_behavior": "hold operating state",
+    "no_scenario_answer_in_physics": true,
+    "no_fabricated_alarm_or_protection_setting": true,
+    "raw_physics_is_read_only": true
+  }
+}
