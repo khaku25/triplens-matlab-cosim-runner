@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: fwp-hp-native-${{ github.ref }}
+  group: fwp-hp-native-split-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
