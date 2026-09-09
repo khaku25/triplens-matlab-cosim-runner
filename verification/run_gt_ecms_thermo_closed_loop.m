@@ -94,8 +94,17 @@ addTripSelector(mdl,'GT_Flow_Selector','606.94','150',540);
 addTripSelector(mdl,'GT_Temperature_Selector','893.75','550',610);
 add_line(mdl,'ECMS_A_Logic/3','GT_Flow_Selector/2','autorouting','on');
 add_line(mdl,'ECMS_A_Logic/3','GT_Temperature_Selector/2','autorouting','on');
-add_line(mdl,'GT_Flow_Selector/1','Thermo_CVODE_FMU/1','autorouting','on');
-add_line(mdl,'GT_Temperature_Selector/1','Thermo_CVODE_FMU/2','autorouting','on');
+% Preserve the exact nominal FMI initialization values.  The FMU must see
+% these before any switched command is evaluated, as in the proven input
+% response probe.  Subsequent values still come from the ECMS selectors.
+add_block('simulink/Discrete/Unit Delay',[mdl '/Initialized_GT_Flow'], ...
+    'InitialCondition','606.94','SampleTime','0.1','Position',[950 525 1010 555]);
+add_block('simulink/Discrete/Unit Delay',[mdl '/Initialized_GT_Temperature'], ...
+    'InitialCondition','893.75','SampleTime','0.1','Position',[950 595 1010 625]);
+add_line(mdl,'GT_Flow_Selector/1','Initialized_GT_Flow/1','autorouting','on');
+add_line(mdl,'GT_Temperature_Selector/1','Initialized_GT_Temperature/1','autorouting','on');
+add_line(mdl,'Initialized_GT_Flow/1','Thermo_CVODE_FMU/1','autorouting','on');
+add_line(mdl,'Initialized_GT_Temperature/1','Thermo_CVODE_FMU/2','autorouting','on');
 
 % Thermo ST power is fed back to the ECMS state monitor in MW.
 add_block('simulink/Math Operations/Gain',[mdl '/ST_W_to_MW'], ...
@@ -118,9 +127,9 @@ add_line(mdl,'CB_52GT_Feedback_Delay/1','log_cb_52gt_closed_fb/1','autorouting',
 addWorkspaceSink(mdl,'log_stg_power_feedback_mw','stg_power_feedback_mw',[1460 410 1685 440]);
 add_line(mdl,'ST_W_to_MW/1','log_stg_power_feedback_mw/1','autorouting','on');
 addWorkspaceSink(mdl,'log_applied_gt_flow','applied_gt_flow',[860 530 1010 555]);
-add_line(mdl,'GT_Flow_Selector/1','log_applied_gt_flow/1','autorouting','on');
+add_line(mdl,'Initialized_GT_Flow/1','log_applied_gt_flow/1','autorouting','on');
 addWorkspaceSink(mdl,'log_applied_gt_temperature','applied_gt_temperature',[820 600 1010 625]);
-add_line(mdl,'GT_Temperature_Selector/1','log_applied_gt_temperature/1','autorouting','on');
+add_line(mdl,'Initialized_GT_Temperature/1','log_applied_gt_temperature/1','autorouting','on');
 
 thermoNames = {'hpDrumLevel','hpDrumPressure','ipDrumLevel', ...
     'ipDrumPressure','lpDrumLevel','lpDrumPressure','stElectricalPower'};
