@@ -1,0 +1,131 @@
+{
+  "schema_version": "2.0.0",
+  "name": "TripLens Plant Model v2",
+  "base_physics": {
+    "repository": "Dwarf-Planet-Project/ThermoSysPro",
+    "commit": "db81ae1b5a6a85f6c6c7693244cafa6087e18ff5",
+    "class": "ThermoSysPro.Examples.CombinedCyclePowerPlant.CombinedCycle_TripTAC",
+    "normal_gt_exhaust_flow_kg_s": 606.94,
+    "normal_gt_exhaust_temperature_k": 893.75,
+    "normal_feedwater_pump_speed_rpm": 1400.0
+  },
+  "physics_modules": [
+    {
+      "id": "GT",
+      "status": "active",
+      "binding": "gtExhaustFlowCmd + gtExhaustTemperatureCmd",
+      "notes": "Existing validated GT exhaust boundary interface."
+    },
+    {
+      "id": "ST",
+      "status": "active",
+      "binding": "inherited ThermoSysPro steam turbine/generator equations",
+      "feedback": ["stElectricalPower"]
+    },
+    {
+      "id": "HRSG",
+      "status": "active",
+      "binding": "inherited ThermoSysPro HP/MP/BP drum and heat-exchanger equations",
+      "feedback": [
+        "hpDrumLevel",
+        "ipDrumLevel",
+        "lpDrumLevel",
+        "hpDrumPressure",
+        "ipDrumPressure",
+        "lpDrumPressure"
+      ]
+    },
+    {
+      "id": "FWP_HP_DYNAMIC",
+      "status": "active",
+      "thermosyspro_component": "PompeAlimHP",
+      "speed_source_replaced": "arretPomesHP",
+      "speed_input": "fwpHpSpeedCmd",
+      "feedback": ["fwpHpSpeedApplied", "fwpHpMassFlow"],
+      "operation_logic": "ecms_pump_logic/build_fwp_hp_operation.m",
+      "operation_logic_status": "validated_on_windows_matlab_r2025b"
+    },
+    {
+      "id": "FWP_IP_DYNAMIC",
+      "status": "physics_input_active_logic_pending",
+      "thermosyspro_component": "PompeAlimMP",
+      "speed_source_replaced": "arretPomesMp",
+      "speed_input": "fwpIpSpeedCmd",
+      "feedback": ["fwpIpSpeedApplied", "fwpIpMassFlow"],
+      "operation_logic_status": "not_yet_implemented"
+    },
+    {
+      "id": "FWP_LP_DYNAMIC",
+      "status": "physics_input_active_logic_pending",
+      "thermosyspro_component": "PompeAlimBP",
+      "speed_source_replaced": "arretPomesBP",
+      "speed_input": "fwpLpSpeedCmd",
+      "feedback": ["fwpLpSpeedApplied", "fwpLpMassFlow"],
+      "operation_logic_status": "not_yet_implemented"
+    },
+    {
+      "id": "CONDENSATE_PUMP_DYNAMIC",
+      "status": "not_present_in_current_base_model",
+      "binding": null,
+      "reason": "The pinned CombinedCycle_TripTAC currently exposes only the HP/MP/BP feedwater centrifugal pumps. Do not fabricate condensate-pump physics."
+    },
+    {
+      "id": "CW_PUMP_DYNAMIC",
+      "status": "not_present_in_current_base_model",
+      "binding": null,
+      "reason": "No dedicated circulating-water centrifugal pump is present in the pinned CombinedCycle_TripTAC. Add a physical component and circuit before enabling commands."
+    }
+  ],
+  "operating_states": [
+    {
+      "id": "NORMAL_100",
+      "status": "active",
+      "source": "normal-hold golden state",
+      "windows_state_path": "C:/TripLensWarm/normal_hold_res.mat",
+      "notes": "Nominal GT exhaust inputs held constant; no scheduled trip."
+    },
+    {
+      "id": "NORMAL_75",
+      "status": "requires_physical_definition_and_capture",
+      "windows_state_path": null
+    },
+    {
+      "id": "NORMAL_50",
+      "status": "requires_physical_definition_and_capture",
+      "windows_state_path": null
+    },
+    {
+      "id": "COLD_START",
+      "status": "requires_startup_model_and_consistent_state_capture",
+      "windows_state_path": null,
+      "notes": "Do not create by forcing pressures, temperatures and speeds to zero."
+    }
+  ],
+  "command_contract": {
+    "discrete_commands": [
+      "START",
+      "STOP",
+      "TRIP",
+      "RESET",
+      "BREAKER_OPEN",
+      "BREAKER_CLOSE"
+    ],
+    "analog_commands": [
+      "VALVE_POSITION"
+    ],
+    "rules": [
+      "START never closes a feeder breaker implicitly.",
+      "Normal STOP removes run enable but does not trip the feeder breaker.",
+      "TRIP may open the associated feeder breaker through ECMS logic and removes motor torque/run enable.",
+      "RESET clears a latched state only when reset permissives are satisfied; it does not restart equipment.",
+      "BREAKER_CLOSE and START are separate actions.",
+      "VALVE_POSITION is enabled only after the target valve has an explicit validated physical binding."
+    ]
+  },
+  "blind_test_policy": {
+    "normal_no_command_behavior": "hold operating state",
+    "no_scenario_answer_in_physics": true,
+    "no_fabricated_alarm_or_protection_setting": true,
+    "raw_physics_is_read_only": true
+  }
+}
