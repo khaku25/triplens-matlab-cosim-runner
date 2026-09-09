@@ -1,0 +1,91 @@
+name: Publish GT Trip Native-Seeded Result
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish-gt-trip-native-seeded-result.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish-result:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download completed GT Trip evidence without rerunning simulation
+        uses: actions/download-artifact@v4
+        with:
+          name: gt-trip-native-seeded-3input-2
+          repository: khaku25/triplens-matlab-cosim-runner
+          run-id: 34311992702
+          github-token: ${{ github.token }}
+          path: completed_gt_trip_result
+
+      - name: Convert completed JSON to committed evidence summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          JSON="$(find completed_gt_trip_result -name gt_trip_physical_revalidation.json -print -quit)"
+          test -n "$JSON"
+          mkdir -p docs/evidence
+          cp "$JSON" docs/evidence/gt_trip_native_seeded_3input_20260909.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=json.load(open('docs/evidence/gt_trip_native_seeded_3input_20260909.json'))
+          assert p['status']=='pass'
+          assert p['initialization_passed'] is True
+          gate=p['interpretation_gate']
+          lines=[
+            '# GT Trip native-seeded 3-input physical revalidation — 2026-09-09',
+            '',
+            '- Source workflow run: `34311992702`',
+            '- Result: **PASS**',
+            '- Actual FMI Co-Simulation: `true`',
+            '- Native-state seed initialization: **PASS**',
+            '- ST trip physical input held at zero for the whole run: `true`',
+            f"- GT command: `{p['nominal_command']['gtExhaustFlowCmd']} kg/s / {p['nominal_command']['gtExhaustTemperatureCmd']} K` -> `{p['gt_trip_command']['gtExhaustFlowCmd']} kg/s / {p['gt_trip_command']['gtExhaustTemperatureCmd']} K` at t={p['trip_at_s']} s",
+            f"- Stop time: `{p['stop_s']} s`; FMI communication step: `{p['step_s']} s`",
+            '',
+            '## ST electrical response',
+            '',
+            f"- Pre-trip: `{p['st_power_pre_trip_W']/1e6:.9f} MW`",
+            f"- Minimum: `{p['st_power_min_W']/1e6:.9f} MW`",
+            f"- Final: `{p['st_power_final_W']/1e6:.9f} MW`",
+            f"- Minimum change vs pre-trip: `{p['st_power_min_change_pct_vs_pretrip']:.6f}%`",
+            f"- Final change vs pre-trip: `{p['st_power_final_change_pct_vs_pretrip']:.6f}%`",
+            '',
+            '## Drum level final minus pre-trip',
+            '',
+            f"- HP: `{p['drum_level_final_minus_pretrip_m']['hp']:.9f} m`",
+            f"- IP: `{p['drum_level_final_minus_pretrip_m']['ip']:.9f} m`",
+            f"- LP: `{p['drum_level_final_minus_pretrip_m']['lp']:.9f} m`",
+            '',
+            '## Isolation checks',
+            '',
+            f"- HP admission valve stayed at native 0.8: `{p['hp_admission_stayed_native_0p8']}`",
+            f"- MP admission valve stayed at native 0.8: `{p['mp_admission_stayed_native_0p8']}`",
+            f"- Strong trip-like gate (ST drop <= -70%): `{gate['strong_trip_like_if_st_power_drop_pct_le_minus_70']}`",
+            f"- Moderate derating gate (-70% < drop <= -20%): `{gate['moderate_derating_if_drop_between_20_and_70_pct']}`",
+            f"- Weak-response gate (drop > -20%): `{gate['weak_response_if_drop_gt_minus_20_pct']}`",
+            '',
+            'Interpretation gates are model-response labels for this virtual model, not plant protection settings.',
+          ]
+          Path('docs/evidence/gt_trip_native_seeded_3input_20260909.md').write_text('\n'.join(lines)+'\n')
+          print('\n'.join(lines))
+          PY
+
+      - name: Commit immutable evidence files
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'TripLens CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git add docs/evidence/gt_trip_native_seeded_3input_20260909.json docs/evidence/gt_trip_native_seeded_3input_20260909.md
+          git commit -m 'Record native-seeded 3-input GT trip revalidation evidence'
+          git push origin HEAD:main
