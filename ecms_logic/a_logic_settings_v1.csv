@@ -1,12 +1,11 @@
 setting_id,category,value,unit,status,source_reference,notes
 TRIP_RECEIVE_DELAY_MS,A_PROTECTION,20,ms,PROVISIONAL,config/ecms_a_settings.csv,GT Trip signal receive delay
-LOCKOUT_OPERATE_DELAY_MS,A_PROTECTION,35,ms,PROVISIONAL,config/ecms_a_settings.csv,86GT operate delay after trip receive
-GT_BREAKER_OPEN_DELAY_MS,A_PROTECTION,80,ms,PROVISIONAL,config/ecms_a_settings.csv,52GT trip/open timing from GT Trip episode
+LOCKOUT_OPERATE_DELAY_MS,A_PROTECTION,35,ms,PROVISIONAL,config/ecms_a_settings.csv,86GT operate delay after resolved GT trip request
+GT_BREAKER_OPEN_DELAY_MS,A_PROTECTION,80,ms,PROVISIONAL,config/ecms_a_settings.csv,52GT trip/open timing from resolved GT trip request
 BUS_UNDERVOLTAGE_PICKUP_KV,A_PROTECTION,5.52,kV,MODEL_ABSOLUTE_NOT_PLANT_APPROVED,Thermo/ECMS virtual model,80 percent of 6.9 kV model bus expressed as absolute kV
 UNDERVOLTAGE_DELAY_MS,A_PROTECTION,300,ms,PROVISIONAL,config/ecms_a_settings.csv,27UV continuous low-voltage delay
-ST_LOW_POWER_MW,A_CONTROL,55.4,MW,MODEL_ABSOLUTE_NOT_PLANT_APPROVED,Thermo/ECMS virtual model,20 percent of 277 MW state reference expressed as absolute MW
-ST_BREAKER_OPEN_DELAY_MS,A_PROTECTION,100,ms,PROVISIONAL_DISABLED,config/ecms_a_settings.csv,Kept for traceability but not enabled until C&E validation
+ST_LOW_POWER_MW,A_CONTROL,55.4,MW,MODEL_ABSOLUTE_NOT_PLANT_APPROVED,Thermo/ECMS virtual model,20 percent of 277 MW state reference; indication only and not a trip source
+ST_BREAKER_OPEN_DELAY_MS,A_PROTECTION,100,ms,PROVISIONAL,config/ecms_a_settings.csv,Virtual-model 52ST actuation delay after resolved ST trip request; replace with approved breaker/C&E timing when available
 AUTO_BUS_TIE_TRANSFER,A_CONTROL,0,BOOL,PROVISIONAL,config/ecms_a_settings.csv,Disabled by default; core exposes auto-close permissive only
 ALLOW_SOURCE_PARALLEL,A_CONTROL,0,BOOL,PROVISIONAL,config/ecms_a_settings.csv,No synchronism model so parallel close remains prohibited
 LOGIC_SAMPLE_TIME_MS,A_SYSTEM,1,ms,MIGRATION_DESIGN,TripLens migration design,Protection logic core standalone sample time; rate adapter required when main co-sim runs slower
-
