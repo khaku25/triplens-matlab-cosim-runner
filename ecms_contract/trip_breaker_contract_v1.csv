@@ -1,0 +1,11 @@
+equipment_id,trip_request_signal,required_breaker_tag,required_closed_value,secondary_effect,status,notes
+GTG,gt_trip_request,52GT.CLOSED,0,ST intertrip request,ACTIVE,TRIP requires generator breaker open; GT exhaust reduction alone is DERATING
+STG,st_trip_request,52ST.CLOSED,0,HP/MP turbine admission valve close,ACTIVE,TRIP requires generator breaker open; valve closure is secondary physical shutdown action
+FWP-HP,fwp_hp_trip_request,VCB-A01.CLOSED,0,motor torque removal and coastdown,ACTIVE_VERIFIED,Existing FWP-HP operation core opens VCB-A01 on trip
+FWP-IP,fwp_ip_trip_request,VCB-B01.CLOSED,0,motor torque removal and coastdown,PENDING_ACTUATOR,Native PompeAlimMP exists but breaker actuator is not yet end-to-end verified
+FWP-LP,fwp_lp_trip_request,VCB-A02.CLOSED,0,motor torque removal and coastdown,PENDING_ACTUATOR,Native PompeAlimBP exists but breaker actuator is not yet end-to-end verified
+CB-52GT,cb_52gt_trip_request,52GT.CLOSED,0,,ACTIVE,Direct breaker trip
+CB-52ST,cb_52st_trip_request,52ST.CLOSED,0,,ACTIVE,Direct breaker trip
+CB-IN-A,cb_in_a_trip_request,CB-IN-A.CLOSED,0,,CONTRACT_ONLY,Electrical topology command exists; solved electrical actuator still pending
+CB-IN-B,cb_in_b_trip_request,CB-IN-B.CLOSED,0,,CONTRACT_ONLY,Electrical topology command exists; solved electrical actuator still pending
+CB-TIE-AB,cb_tie_ab_trip_request,CB-TIE-AB.CLOSED,0,,CONTRACT_ONLY,Electrical topology command exists; solved electrical actuator still pending
