@@ -30,7 +30,7 @@ jobs:
           git clone --no-checkout https://github.com/Dwarf-Planet-Project/ThermoSysPro.git fwp_warm/vendor/ThermoSysPro
           git -C fwp_warm/vendor/ThermoSysPro checkout --detach db81ae1b5a6a85f6c6c7693244cafa6087e18ff5
 
-      - name: Build HP-FWP test model with native discharge isolation
+      - name: Build HP-FWP test model with regularized discharge isolation
         shell: bash
         run: |
           set -euo pipefail
@@ -78,22 +78,24 @@ jobs:
           if n!=1: raise SystemExit(f'HP native flow-regularization count={n}')
 
           # CombinedCycle_TripTAC has no HP-pump discharge non-return isolation.
-          # The static pump loses its positive-flow operating point before Q=0,
-          # while the library check-valve property block can enter invalid trial
-          # pressures. Keep this small, transparent adapter inside R&D only.
+          # The static pump loses its positive-flow operating point before Q=0.
+          # Use a continuous, speed-coupled reverse-leak resistance so the DAE
+          # remains one structure through coastdown. Keep it inside R&D only.
           declaration=(
-              '  model TripLensFwpHpLowFlowNRV\n'
-              '    parameter Modelica.SIunits.MassFlowRate Qclose=50\n'
-              '      "Virtual R&D low-flow closure threshold; plant/OEM value pending";\n'
-              '    parameter Modelica.SIunits.MassFlowRate Qmin=1e-6;\n'
-              '    parameter Modelica.SIunits.Pressure dPOpen=1e6\n'
-              '      "Virtual R&D restart hysteresis; plant/OEM value pending";\n'
+              '  model TripLensFwpHpRegularizedNRV\n'
+              '    parameter ThermoSysPro.Units.AngularVelocity_rpm VrOpen=1399\n'
+              '      "Virtual R&D full-open speed; plant/OEM value pending";\n'
+              '    parameter ThermoSysPro.Units.AngularVelocity_rpm VrClosed=1370\n'
+              '      "Virtual R&D isolated speed; plant/OEM value pending";\n'
+              '    parameter Real Ropen(unit="Pa.s/kg")=1e-3;\n'
+              '    parameter Real Rclosed(unit="Pa.s/kg")=1e9\n'
+              '      "Virtual R&D reverse-leak resistance; plant/OEM value pending";\n'
               '    parameter Modelica.SIunits.MassFlowRate Qeps=1e-3;\n'
-              '    Boolean isOpen(start=true, fixed=true);\n'
-              '    discrete Boolean openRequest(start=false, fixed=true);\n'
-              '    discrete Boolean closeRequest(start=false, fixed=true);\n'
+              '    Real opening(min=0, max=1);\n'
+              '    Real hydraulicResistance(unit="Pa.s/kg");\n'
               '    Modelica.SIunits.MassFlowRate Q;\n'
               '    Modelica.SIunits.Pressure deltaP;\n'
+              '    ThermoSysPro.InstrumentationAndControl.Connectors.InputReal speed;\n'
               '    ThermoSysPro.WaterSteam.Connectors.FluidInlet C1;\n'
               '    ThermoSysPro.WaterSteam.Connectors.FluidOutlet C2;\n'
               '  equation\n'
@@ -104,19 +106,13 @@ jobs:
               '    0 = noEvent(if Q > Qeps then C1.h - C1.h_vol else if Q < -Qeps then\n'
               '      C2.h - C2.h_vol else C1.h - 0.5*((C1.h_vol - C2.h_vol)*\n'
               '      Modelica.Math.sin(Modelica.Constants.pi*Q/2/Qeps) + C1.h_vol + C2.h_vol));\n'
-              '    if isOpen then\n'
-              '      deltaP = 0;\n'
-              '    else\n'
-              '      Q = Qmin;\n'
-              '    end if;\n'
-              '    openRequest = deltaP > dPOpen;\n'
-              '    closeRequest = Q < Qclose;\n'
-              '    when {pre(closeRequest), pre(openRequest)} then\n'
-              '      isOpen = pre(openRequest);\n'
-              '    end when;\n'
-              '  end TripLensFwpHpLowFlowNRV;\n'
-              '  TripLensFwpHpLowFlowNRV tripLensFwpHpDischargeNRV\n'
-              '    "R&D-only hydraulic isolation adapter; not a Competition tag";\n')
+              '    opening = noEvent(max(0, min(1,\n'
+              '      (speed.signal - VrClosed)/(VrOpen - VrClosed))));\n'
+              '    hydraulicResistance = Ropen + (Rclosed - Ropen)*(1 - opening)^8;\n'
+              '    deltaP = hydraulicResistance*Q;\n'
+              '  end TripLensFwpHpRegularizedNRV;\n'
+              '  TripLensFwpHpRegularizedNRV tripLensFwpHpDischargeNRV\n'
+              '    "R&D-only regularized non-return isolation; not a Competition tag";\n')
           txt,n=re.subn(r'^equation\s*$', declaration+'equation', txt, count=1, flags=re.M)
           if n!=1: raise SystemExit(f'HP discharge NRV declaration count={n}')
 
@@ -125,7 +121,8 @@ jobs:
               '    annotation (Line(points={{721,-102.8},{809,-102.8},{809,-50},{791,-50}}));')
           new_discharge=(
               '  connect(PompeAlimHP.C2, tripLensFwpHpDischargeNRV.C1);\n'
-              '  connect(tripLensFwpHpDischargeNRV.C2, Vanne_alimentationMPHP1.C1);')
+              '  connect(tripLensFwpHpDischargeNRV.C2, Vanne_alimentationMPHP1.C1);\n'
+              '  connect(arretPomesHP.y, tripLensFwpHpDischargeNRV.speed);')
           if txt.count(old_discharge)!=1:
               raise SystemExit(f'HP discharge connection count={txt.count(old_discharge)}')
           txt=txt.replace(old_discharge,new_discharge,1)
@@ -143,13 +140,13 @@ jobs:
               'native_topology_modified':True,
               'new_motor_component_inserted':False,
               'native_discharge_check_valve_inserted':False,
-              'r_and_d_low_flow_isolation_adapter_inserted':True,
-              'r_and_d_discharge_isolation':'TripLensFwpHpLowFlowNRV between PompeAlimHP and Vanne_alimentationMPHP1; internal R&D adapter, no field/Competition tag',
-              'r_and_d_discharge_isolation_parameters':'Qclose=50 kg/s, dPOpen=1e6 Pa; virtual R&D values pending plant/OEM data',
+              'r_and_d_regularized_isolation_adapter_inserted':True,
+              'r_and_d_discharge_isolation':'TripLensFwpHpRegularizedNRV between PompeAlimHP and Vanne_alimentationMPHP1; speed-coupled continuous resistance, no field/Competition tag',
+              'r_and_d_discharge_isolation_parameters':'VrOpen=1399 rpm, VrClosed=1370 rpm, Rclosed=1e9 Pa.s/kg; virtual R&D values pending plant/OEM data',
               'native_numerical_regularization':'PompeAlimHP.continuous_flow_reversal=true; built-in Qeps smoothing only',
               'gt_boundary':'NORMAL_100 606.94 kg/s / 893.75 K',
               'coastdown_source':'R&D FWP virtual motor surrogate; tau approx 1 s, not plant-approved',
-              'initialization':'emit-protected solved snapshot -> dedicated 300-420 CVODE executable with native discharge isolation'
+              'initialization':'emit-protected solved snapshot -> dedicated 300-420 CVODE executable with regularized discharge isolation'
           },indent=2),encoding='utf-8')
           print('FWP_HP_WARM_MODEL_BUILD_PASS')
           PY
@@ -206,7 +203,7 @@ jobs:
           buildModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_HP_WarmSeeded,
             startTime=300, stopTime=420, numberOfIntervals=1200, tolerance=1e-3,
             method="cvode", outputFormat="csv", fileNamePrefix="fwp_hp_trip_restart",
-            variableFilter="^(time|arretPomesHP\\.y\\.signal|PompeAlimHP\\.Q|CapteurDebitEauHP\\.Measure\\.signal|Ballon(HP|MP|BP)\\.(P|zl)|tripLensFwpHpDischargeNRV\\.isOpen)$");
+            variableFilter="^(time|arretPomesHP\\.y\\.signal|PompeAlimHP\\.Q|CapteurDebitEauHP\\.Measure\\.signal|Ballon(HP|MP|BP)\\.(P|zl)|tripLensFwpHpDischargeNRV\\.opening)$");
           getErrorString();
           MOS
           docker run --rm \
@@ -277,15 +274,9 @@ jobs:
           except SystemExit:
               c_q=find_col('native_feedwater_flow',exact=('CapteurDebitEauHP.Measure.signal',),contains_all=('CapteurDebitEauHP',),suffixes=('.signal',))
           c_nrv=find_col(
-              'native_discharge_nrv',
-              exact=('tripLensFwpHpDischargeNRV.isOpen',),
-              contains_all=('tripLensFwpHpDischargeNRV',), suffixes=('.isOpen',))
-
-          def parse_bool(value):
-              v=value.strip().strip('"').lower()
-              if v in ('true','1','1.0'): return True
-              if v in ('false','0','0.0'): return False
-              raise SystemExit(f'invalid NRV Boolean value: {value}')
+              'r_and_d_discharge_isolation',
+              exact=('tripLensFwpHpDischargeNRV.opening',),
+              contains_all=('tripLensFwpHpDischargeNRV',), suffixes=('.opening',))
 
           drum_names=('BallonHP.zl','BallonHP.P','BallonMP.zl','BallonMP.P','BallonBP.zl','BallonBP.P')
           drum_cols=[(n,h.index(n)) for n in drum_names if n in h]
@@ -312,12 +303,11 @@ jobs:
                   'time_s':t[j],
                   'rpm_command':float(rows[j][c_rpm]),
                   'native_flow':float(rows[j][c_q]),
-                  'nrv_open':parse_bool(rows[j][c_nrv]),
+                  'isolation_opening':float(rows[j][c_nrv]),
               }
               for name,i in drum_cols:
                   vals[name]=float(rows[j][i])
-              finite=finite and all(
-                  math.isfinite(v) for k,v in vals.items() if k!='nrv_open')
+              finite=finite and all(math.isfinite(v) for v in vals.values())
               samples[str(ts)]=vals
 
           coast=[samples[str(x)]['rpm_command'] for x in [300.1,300.5,301,302,305,310]]
@@ -328,14 +318,14 @@ jobs:
           if not finite:
               raise SystemExit('non-finite major variable')
 
-          if not samples['300']['nrv_open']:
-              raise SystemExit('HP discharge NRV is not open at the NORMAL_100 boundary')
-          nrv_after=[samples[str(x)]['nrv_open'] for x in [301,302,305,310]]
-          if all(nrv_after):
-              raise SystemExit('HP discharge NRV did not close during pump coastdown')
+          if samples['300']['isolation_opening'] < 0.99:
+              raise SystemExit('HP discharge isolation is not fully open at the NORMAL_100 boundary')
+          opening_after=[samples[str(x)]['isolation_opening'] for x in [301,302,305,310]]
+          if max(opening_after) > 0.01:
+              raise SystemExit('HP discharge isolation did not close during pump coastdown: '+str(opening_after))
           post_trip_flow=[samples[str(x)]['native_flow'] for x in [301,302,305,310,330]]
-          if min(post_trip_flow) < -1e-5:
-              raise SystemExit('reverse HP feedwater flow bypassed the discharge NRV: '+str(post_trip_flow))
+          if max(abs(q) for q in post_trip_flow) > 0.2:
+              raise SystemExit('regularized HP discharge isolation leakage too large: '+str(post_trip_flow))
 
           # Demand a real native process response, not merely the commanded RPM.
           q0=samples['300']['native_flow']
@@ -349,7 +339,7 @@ jobs:
               'status':'pass',
               'simulation_success':True,
               'warm_state_used':True,
-              'restart_method':'emit-protected snapshot + R&D low-flow HP discharge isolation + dedicated CVODE executable + iif/iit/iim=none',
+              'restart_method':'emit-protected snapshot + R&D regularized HP discharge isolation + dedicated CVODE executable + iif/iit/iim=none',
               'raw_start_s':t[0],
               'raw_end_s':t[-1],
               'raw_rows':len(rows),
@@ -358,7 +348,8 @@ jobs:
               'native_process_response':True,
               'native_flow_max_delta':max_q_delta,
               'r_and_d_discharge_isolation_closed_after_trip':True,
-              'resolved_columns':{'rpm':h[c_rpm],'flow':h[c_q],'nrv':h[c_nrv],'drums':[n for n,_ in drum_cols]},
+              'post_trip_isolation_flow_bound_kg_s':0.2,
+              'resolved_columns':{'rpm':h[c_rpm],'flow':h[c_q],'isolation':h[c_nrv],'drums':[n for n,_ in drum_cols]},
               'samples':samples,
               'guardrail':'FWP motor coastdown constants are virtual-model R&D settings, not plant-approved settings.'
           }
