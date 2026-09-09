@@ -1,0 +1,86 @@
+name: Plant Model v2 Contract
+
+on:
+  push:
+    branches: [integrate/plant-v2-fwp-hp-validated]
+    paths:
+      - 'plant_v2/**'
+      - '.github/workflows/plant-model-v2-contract.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-plant-v2:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare pinned ThermoSysPro
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf legacy_exact/vendor/ThermoSysPro plant_v2/build
+          mkdir -p legacy_exact/vendor plant_v2/build/omhome
+          git clone --no-checkout https://github.com/Dwarf-Planet-Project/ThermoSysPro.git legacy_exact/vendor/ThermoSysPro
+          git -C legacy_exact/vendor/ThermoSysPro checkout --detach db81ae1b5a6a85f6c6c7693244cafa6087e18ff5
+          test "$(git -C legacy_exact/vendor/ThermoSysPro rev-parse HEAD)" = "db81ae1b5a6a85f6c6c7693244cafa6087e18ff5"
+
+      - name: Build integrated v2 Modelica class
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 plant_v2/scripts/build_plant_v2_cosim.py
+          python3 plant_v2/scripts/validate_plant_v2.py
+
+      - name: Install Modelica 3.2.3
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$PWD/plant_v2/build/omhome:/root" \
+            -v "$PWD/legacy_exact:/workspace" \
+            -w /workspace \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            omc /workspace/modelica/install_dependencies.mos
+
+      - name: OpenModelica structural check
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > plant_v2/build/check_v2.mos <<'MOS'
+          setCommandLineOptions("--std=3.4");
+          loadModel(Modelica,{"3.2.3"}); getErrorString();
+          loadFile("/repo/legacy_exact/vendor/ThermoSysPro/ThermoSysPro/package.mo"); getErrorString();
+          loadFile("/repo/plant_v2/build/TripLens_Plant_V2_CoSim.mo"); getErrorString();
+          loadFile("/repo/plant_v2/modelica/TripLens_Plant_V2_Normal100.mo"); getErrorString();
+          checkModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_Plant_V2_CoSim);
+          getErrorString();
+          checkModel(TripLens_Plant_V2_Normal100);
+          getErrorString();
+          MOS
+          docker run --rm \
+            -v "$PWD/plant_v2/build/omhome:/root" \
+            -v "$PWD:/repo" \
+            -w /repo \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            omc /repo/plant_v2/build/check_v2.mos | tee plant_v2/build/check_v2.log
+          grep -q "Check of ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_Plant_V2_CoSim completed successfully" plant_v2/build/check_v2.log
+          grep -q "Check of TripLens_Plant_V2_Normal100 completed successfully" plant_v2/build/check_v2.log
+          echo PLANT_V2_OPENMODELICA_CHECK_PASS
+
+      - name: Upload generated v2 evidence
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: plant-model-v2-${{ github.run_number }}
+          path: |
+            plant_v2/build/TripLens_Plant_V2_CoSim.mo
+            plant_v2/build/check_v2.log
+            plant_v2/modelica/TripLens_Plant_V2_Normal100.mo
+            plant_v2/plant_model_v2_contract.json
+            plant_v2/README.md
+          if-no-files-found: warn
+          retention-days: 30
