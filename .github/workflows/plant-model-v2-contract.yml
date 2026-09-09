@@ -2,7 +2,7 @@ name: Plant Model v2 Contract
 
 on:
   push:
-    branches: [integrate/plant-v2-fwp-hp-validated]
+    branches: [main]
     paths:
       - 'plant_v2/**'
       - '.github/workflows/plant-model-v2-contract.yml'
