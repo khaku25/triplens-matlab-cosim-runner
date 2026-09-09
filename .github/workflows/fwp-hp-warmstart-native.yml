@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: fwp-hp-native-split2-${{ github.ref }}
+  group: fwp-hp-native-split3-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -181,6 +181,22 @@ jobs:
               '    Pm = (C1.P + C2.P)/2;\n'
               '    rho = rhoFixed;\n'
               '  end TripLensFwpHpRegularizedControlValve;\n'
+              '  model TripLensFwpHpClosedIsolation\n'
+              '    Real opening;\n'
+              '    Modelica.SIunits.MassFlowRate Q;\n'
+              '    Modelica.SIunits.Pressure deltaP;\n'
+              '    ThermoSysPro.InstrumentationAndControl.Connectors.InputReal speed;\n'
+              '    ThermoSysPro.WaterSteam.Connectors.FluidInlet C1;\n'
+              '    ThermoSysPro.WaterSteam.Connectors.FluidOutlet C2;\n'
+              '  equation\n'
+              '    C1.Q = C2.Q;\n'
+              '    C1.Q = 0;\n'
+              '    C1.h = C2.h;\n'
+              '    C1.h = C1.h_vol;\n'
+              '    Q = C1.Q;\n'
+              '    deltaP = C1.P - C2.P;\n'
+              '    opening = 0;\n'
+              '  end TripLensFwpHpClosedIsolation;\n'
               '  TripLensFwpHpRegularizedNRV tripLensFwpHpDischargeNRV\n'
               '    "R&D-only regularized non-return isolation; not a Competition tag";\n')
           txt,n=re.subn(r'^equation\s*$', declaration+'equation', txt, count=1, flags=re.M)
@@ -212,10 +228,24 @@ jobs:
               'end TripLens_FWP_HP_WarmSeeded;',
               'end TripLens_FWP_HP_TripRuntime;',
               1)
+          closed_txt=runtime_txt.replace(
+              'model TripLens_FWP_HP_TripRuntime\n',
+              'model TripLens_FWP_HP_ClosedRuntime\n',
+              1)
+          closed_txt=closed_txt.replace(
+              'end TripLens_FWP_HP_TripRuntime;',
+              'end TripLens_FWP_HP_ClosedRuntime;',
+              1)
+          closed_txt=closed_txt.replace(
+              'TripLensFwpHpRegularizedNRV tripLensFwpHpDischargeNRV',
+              'TripLensFwpHpClosedIsolation tripLensFwpHpDischargeNRV',
+              1)
           Path('fwp_warm/build/TripLens_FWP_HP_WarmSeeded.mo').write_text(
               warm_txt,encoding='utf-8')
           Path('fwp_warm/build/TripLens_FWP_HP_TripRuntime.mo').write_text(
               runtime_txt,encoding='utf-8')
+          Path('fwp_warm/build/TripLens_FWP_HP_ClosedRuntime.mo').write_text(
+              closed_txt,encoding='utf-8')
           Path('fwp_warm/results/contract.json').write_text(json.dumps({
               'base_model':'CombinedCycle_TripTAC',
               'thermosyspro_commit':'db81ae1b5a6a85f6c6c7693244cafa6087e18ff5',
@@ -228,13 +258,14 @@ jobs:
               'native_discharge_check_valve_inserted':False,
               'r_and_d_regularized_isolation_adapter_inserted':True,
               'r_and_d_hp_valve_regularized':True,
+              'post_transition_fixed_closed_topology':True,
               'hp_valve_fixed_density_kg_m3':926.1664940825133,
               'r_and_d_discharge_isolation':'TripLensFwpHpRegularizedNRV between PompeAlimHP and Vanne_alimentationMPHP1; speed-coupled continuous resistance, no field/Competition tag',
               'r_and_d_discharge_isolation_parameters':'VrOpen=1399 rpm, VrClosed=1300 rpm, Rclosed=2e8 Pa.s/kg; virtual R&D values pending plant/OEM data',
               'native_numerical_regularization':'PompeAlimHP and perteChargeK3 continuous_flow_reversal=true; HP valve keeps native Cv law with NORMAL_100 fixed density to avoid invalid IF97 trial states',
               'gt_boundary':'NORMAL_100 606.94 kg/s / 893.75 K',
               'coastdown_source':'R&D FWP virtual motor surrogate; tau approx 1 s, not plant-approved',
-              'initialization':'native-valve 0-300 solved snapshot -> component-name-compatible regularized HP valve 300-420 CVODE runtime'
+              'initialization':'native 0-300 seed -> regularized 300-301 transition -> fixed-closed 301-420 runtime'
           },indent=2),encoding='utf-8')
           print('FWP_HP_WARM_MODEL_BUILD_PASS')
           PY
@@ -278,7 +309,7 @@ jobs:
           test -s fwp_warm/results/fwp_hp_warm_res.mat
           grep -q "The simulation finished successfully" fwp_warm/results/warm.log
 
-      - name: Build transition, coastdown, and hold executables
+      - name: Build transition and fixed-closed executables
         shell: bash
         run: |
           set -euo pipefail
@@ -298,19 +329,10 @@ jobs:
             method="dassl", outputFormat="csv", fileNamePrefix="fwp_hp_transition_raw",
             variableFilter="^(time|arretPomesHP\\.y\\.signal|PompeAlimHP\\.Q|CapteurDebitEauHP\\.Measure\\.signal|Ballon(HP|MP|BP)\\.(P|zl)|tripLensFwpHpDischargeNRV\\.opening)$");
           getErrorString();
-          buildModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_HP_TripRuntime,
-            startTime=301, stopTime=310, numberOfIntervals=1, tolerance=1e-3,
-            method="dassl", outputFormat="mat", fileNamePrefix="fwp_hp_coastdown_state",
-            variableFilter=".*");
-          getErrorString();
-          buildModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_HP_TripRuntime,
-            startTime=301, stopTime=310, numberOfIntervals=90, tolerance=1e-3,
-            method="dassl", outputFormat="csv", fileNamePrefix="fwp_hp_coastdown_raw",
-            variableFilter="^(time|arretPomesHP\\.y\\.signal|PompeAlimHP\\.Q|CapteurDebitEauHP\\.Measure\\.signal|Ballon(HP|MP|BP)\\.(P|zl)|tripLensFwpHpDischargeNRV\\.opening)$");
-          getErrorString();
-          buildModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_HP_TripRuntime,
-            startTime=310, stopTime=420, numberOfIntervals=1100, tolerance=1e-3,
-            method="cvode", outputFormat="csv", fileNamePrefix="fwp_hp_zero_speed_hold",
+          loadFile("/workspace/build/TripLens_FWP_HP_ClosedRuntime.mo"); getErrorString();
+          buildModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_HP_ClosedRuntime,
+            startTime=301, stopTime=420, numberOfIntervals=1190, tolerance=1e-3,
+            method="cvode", outputFormat="csv", fileNamePrefix="fwp_hp_closed_hold",
             variableFilter="^(time|arretPomesHP\\.y\\.signal|PompeAlimHP\\.Q|CapteurDebitEauHP\\.Measure\\.signal|Ballon(HP|MP|BP)\\.(P|zl)|tripLensFwpHpDischargeNRV\\.opening)$");
           getErrorString();
           MOS
@@ -321,9 +343,7 @@ jobs:
             omc /workspace/build/build_trip_restart.mos | tee fwp_warm/results/build_trip_restart.log
           test -x fwp_warm/results/fwp_hp_transition_state
           test -x fwp_warm/results/fwp_hp_transition_raw
-          test -x fwp_warm/results/fwp_hp_coastdown_state
-          test -x fwp_warm/results/fwp_hp_coastdown_raw
-          test -x fwp_warm/results/fwp_hp_zero_speed_hold
+          test -x fwp_warm/results/fwp_hp_closed_hold
 
       - name: Cross 300-to-301 second HP trip transition
         shell: bash
@@ -354,36 +374,7 @@ jobs:
           test -s fwp_warm/results/fwp_hp_transition_state_res.mat
           test -s fwp_warm/results/fwp_hp_transition_raw.csv
 
-      - name: Complete 301-to-310 second motor coastdown
-        shell: bash
-        run: |
-          set -euo pipefail
-          for target in state raw; do
-            timeout 12m docker run --rm \
-              -v "$PWD/fwp_warm/results:/work" \
-              -w /work \
-              openmodelica/openmodelica:v1.27.0-minimal \
-              "./fwp_hp_coastdown_${target}" \
-                -iif=/work/fwp_hp_transition_state_res.mat \
-                -iit=301 \
-                -iim=none \
-                -s=dassl \
-                -noEventEmit \
-                -emit_protected \
-                -initialStepSize=1e-5 \
-                -maxStepSize=0.01 \
-                -r="/work/fwp_hp_coastdown_${target}_res.$([[ "$target" == state ]] && printf mat || printf csv)" \
-                -lv=LOG_INIT,LOG_STATS,LOG_NLS \
-              | tee "fwp_warm/results/trip_coastdown_${target}.log"
-            grep -q "The simulation finished successfully" \
-              "fwp_warm/results/trip_coastdown_${target}.log"
-          done
-          mv fwp_warm/results/fwp_hp_coastdown_raw_res.csv \
-             fwp_warm/results/fwp_hp_coastdown_raw.csv
-          test -s fwp_warm/results/fwp_hp_coastdown_state_res.mat
-          test -s fwp_warm/results/fwp_hp_coastdown_raw.csv
-
-      - name: Run 310-to-420 second zero-speed physical hold
+      - name: Run 301-to-420 second fixed-closed physical response
         shell: bash
         run: |
           set -euo pipefail
@@ -394,27 +385,27 @@ jobs:
               -v "$PWD/fwp_warm/results:/work" \
               -w /work \
               openmodelica/openmodelica:v1.27.0-minimal \
-              ./fwp_hp_zero_speed_hold \
-                -iif=/work/fwp_hp_coastdown_state_res.mat \
-                -iit=310 \
-                -iim=none \
+              ./fwp_hp_closed_hold \
+                -iif=/work/fwp_hp_transition_state_res.mat \
+                -iit=301 \
+                -iim=symbolic \
                 -s="$solver" \
                 -noEventEmit \
                 -initialStepSize=1e-4 \
                 -maxStepSize=0.1 \
-                -r="/work/fwp_hp_zero_speed_hold_${solver}.csv" \
+                -r="/work/fwp_hp_closed_hold_${solver}.csv" \
                 -lv=LOG_INIT,LOG_STATS,LOG_NLS \
-              | tee "fwp_warm/results/trip_zero_speed_hold_${solver}.log"
+              | tee "fwp_warm/results/trip_closed_hold_${solver}.log"
             rc=${PIPESTATUS[0]}
             set -e
             if [[ "$rc" -eq 0 ]] && grep -q "The simulation finished successfully" \
-                "fwp_warm/results/trip_zero_speed_hold_${solver}.log"; then
+                "fwp_warm/results/trip_closed_hold_${solver}.log"; then
               chosen="$solver"
               break
             fi
           done
           test -n "$chosen"
-          printf 'dassl-transition+dassl-coastdown+%s-hold\n' "$chosen" \
+          printf 'dassl-transition+fixed-closed-%s\n' "$chosen" \
             > fwp_warm/results/selected_solver.txt
 
           python3 - "$chosen" <<'PY'
@@ -423,8 +414,7 @@ jobs:
           solver=sys.argv[1]
           paths=[
               Path('fwp_warm/results/fwp_hp_transition_raw.csv'),
-              Path('fwp_warm/results/fwp_hp_coastdown_raw.csv'),
-              Path(f'fwp_warm/results/fwp_hp_zero_speed_hold_{solver}.csv'),
+              Path(f'fwp_warm/results/fwp_hp_closed_hold_{solver}.csv'),
           ]
           header=None
           combined=[]
@@ -602,5 +592,6 @@ jobs:
             fwp_warm/results/fwp_hp_warmstart_report.json
             fwp_warm/build/TripLens_FWP_HP_WarmSeeded.mo
             fwp_warm/build/TripLens_FWP_HP_TripRuntime.mo
+            fwp_warm/build/TripLens_FWP_HP_ClosedRuntime.mo
           if-no-files-found: warn
           retention-days: 30
