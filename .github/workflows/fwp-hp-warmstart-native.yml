@@ -30,7 +30,7 @@ jobs:
           git clone --no-checkout https://github.com/Dwarf-Planet-Project/ThermoSysPro.git fwp_warm/vendor/ThermoSysPro
           git -C fwp_warm/vendor/ThermoSysPro checkout --detach db81ae1b5a6a85f6c6c7693244cafa6087e18ff5
 
-      - name: Build HP-FWP test model with native discharge isolation
+      - name: Build static warm seed and off-design HP-FWP trip runtime
         shell: bash
         run: |
           set -euo pipefail
@@ -65,6 +65,17 @@ jobs:
               f'    Table=[{rows}], option_interpolation=1)')
           txt,n=pat.subn(repl,txt,count=1)
           if n!=1: raise SystemExit(f'HP speed source replacement count={n}')
+
+          # Capture NORMAL_100 with the pinned original static pump. The trip
+          # runtime below keeps all common process-state names so this solved
+          # snapshot can seed it, while adding only the off-design HP boundary.
+          Path('fwp_warm/build/TripLens_FWP_HP_WarmSeeded.mo').write_text(txt,encoding='utf-8')
+          txt=txt.replace(
+              'model TripLens_FWP_HP_WarmSeeded\n',
+              'model TripLens_FWP_HP_TripRuntime\n',1)
+          txt=txt.replace(
+              'end TripLens_FWP_HP_WarmSeeded;',
+              'end TripLens_FWP_HP_TripRuntime;',1)
 
           # StaticCentrifugalPump is valid only while its positive-quadrant
           # head curve intersects the live HP header. At about 1288 rpm the
@@ -132,7 +143,7 @@ jobs:
           if txt.count(old_speed)!=1:
               raise SystemExit(f'HP shaft-speed connection count={txt.count(old_speed)}')
           txt=txt.replace(old_speed,new_speed,1)
-          Path('fwp_warm/build/TripLens_FWP_HP_WarmSeeded.mo').write_text(txt,encoding='utf-8')
+          Path('fwp_warm/build/TripLens_FWP_HP_TripRuntime.mo').write_text(txt,encoding='utf-8')
           Path('fwp_warm/results/contract.json').write_text(json.dumps({
               'base_model':'CombinedCycle_TripTAC',
               'thermosyspro_commit':'db81ae1b5a6a85f6c6c7693244cafa6087e18ff5',
@@ -151,7 +162,7 @@ jobs:
               'native_numerical_regularization':'PompeAlimHP uses ThermoSysPro DynamicCentrifugalPump with the original positive-quadrant coefficients plus continuous flow reversal',
               'gt_boundary':'NORMAL_100 606.94 kg/s / 893.75 K',
               'coastdown_source':'R&D FWP virtual motor surrogate; tau approx 1 s, not plant-approved',
-              'initialization':'emit-protected solved snapshot -> dedicated 300-420 CVODE executable with native discharge isolation'
+              'initialization':'original static NORMAL_100 solved snapshot -> off-design HP trip runtime -> dedicated 300-420 CVODE executable'
           },indent=2),encoding='utf-8')
           print('FWP_HP_WARM_MODEL_BUILD_PASS')
           PY
@@ -203,9 +214,9 @@ jobs:
           setCommandLineOptions("--std=3.4");
           loadModel(Modelica,{"3.2.3"}); getErrorString();
           loadFile("/workspace/vendor/ThermoSysPro/ThermoSysPro/package.mo"); getErrorString();
-          loadFile("/workspace/build/TripLens_FWP_HP_WarmSeeded.mo"); getErrorString();
+          loadFile("/workspace/build/TripLens_FWP_HP_TripRuntime.mo"); getErrorString();
           cd("/workspace/results");
-          buildModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_HP_WarmSeeded,
+          buildModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_HP_TripRuntime,
             startTime=300, stopTime=420, numberOfIntervals=1200, tolerance=1e-3,
             method="cvode", outputFormat="csv", fileNamePrefix="fwp_hp_trip_restart",
             variableFilter="^(time|arretPomesHP\\.y\\.signal|PompeAlimHP\\.(Q|VRot)|CapteurDebitEauHP\\.Measure\\.signal|Ballon(HP|MP|BP)\\.(P|zl)|tripLensFwpHpDischargeNRV\\.ouvert)$");
@@ -351,7 +362,7 @@ jobs:
               'status':'pass',
               'simulation_success':True,
               'warm_state_used':True,
-              'restart_method':'emit-protected snapshot + native HP discharge NRV + dedicated CVODE executable + iif/iit/iim=none',
+              'restart_method':'original static NORMAL_100 snapshot + off-design HP trip runtime + native discharge NRV + dedicated CVODE executable + iif/iit/iim=none',
               'raw_start_s':t[0],
               'raw_end_s':t[-1],
               'raw_rows':len(rows),
@@ -393,5 +404,6 @@ jobs:
             fwp_warm/results/fwp_hp_trip_raw.csv
             fwp_warm/results/fwp_hp_warmstart_report.json
             fwp_warm/build/TripLens_FWP_HP_WarmSeeded.mo
+            fwp_warm/build/TripLens_FWP_HP_TripRuntime.mo
           if-no-files-found: warn
           retention-days: 30
