@@ -75,7 +75,7 @@ jobs:
               'new_motor_or_check_valve_inserted':False,
               'gt_boundary':'NORMAL_100 606.94 kg/s / 893.75 K',
               'coastdown_source':'R&D FWP virtual motor surrogate; tau approx 1 s, not plant-approved',
-              'initialization':'same-model warm state -> -iif/-iit restart -> cvode'
+              'initialization':'emit-protected solved snapshot -> dedicated 300-420 CVODE executable'
           },indent=2),encoding='utf-8')
           print('FWP_HP_WARM_MODEL_BUILD_PASS')
           PY
@@ -107,7 +107,8 @@ jobs:
           simulate(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_HP_WarmSeeded,
             startTime=0, stopTime=300, numberOfIntervals=3000, tolerance=1e-3,
             method="dassl", outputFormat="mat", fileNamePrefix="fwp_hp_warm",
-            simflags="-noEventEmit");
+            variableFilter=".*",
+            simflags="-iim=symbolic -noEventEmit -emit_protected");
           getErrorString();
           MOS
           docker run --rm \
@@ -116,29 +117,48 @@ jobs:
             openmodelica/openmodelica:v1.27.0-minimal \
             omc /workspace/build/warm.mos | tee fwp_warm/results/warm.log
           test -s fwp_warm/results/fwp_hp_warm_res.mat
+          grep -q "The simulation finished successfully" fwp_warm/results/warm.log
 
-      - name: Restart from warm state and run FWP-HP trip physics
+      - name: Build dedicated 300-to-420 CVODE restart executable
         shell: bash
         run: |
           set -euo pipefail
-          cat > fwp_warm/build/trip.mos <<'MOS'
+          cat > fwp_warm/build/build_trip_restart.mos <<'MOS'
           setCommandLineOptions("--std=3.4");
           loadModel(Modelica,{"3.2.3"}); getErrorString();
           loadFile("/workspace/vendor/ThermoSysPro/ThermoSysPro/package.mo"); getErrorString();
           loadFile("/workspace/build/TripLens_FWP_HP_WarmSeeded.mo"); getErrorString();
           cd("/workspace/results");
-          simulate(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_HP_WarmSeeded,
+          buildModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_HP_WarmSeeded,
             startTime=300, stopTime=420, numberOfIntervals=1200, tolerance=1e-3,
-            method="cvode", outputFormat="csv", fileNamePrefix="fwp_hp_trip",
-            simflags="-iif=fwp_hp_warm_res.mat -iit=300 -iim=none -noEventEmit");
+            method="cvode", outputFormat="csv", fileNamePrefix="fwp_hp_trip_restart",
+            variableFilter="^(time|arretPomesHP\\.y\\.signal|PompeAlimHP\\.Q|CapteurDebitEauHP\\.Measure\\.signal|Ballon(HP|MP|BP)\\.(P|zl))$");
           getErrorString();
           MOS
           docker run --rm \
             -v "$PWD/fwp_warm/omhome:/root" \
             -v "$PWD/fwp_warm:/workspace" -w /workspace \
             openmodelica/openmodelica:v1.27.0-minimal \
-            omc /workspace/build/trip.mos | tee fwp_warm/results/trip.log
-          test -s fwp_warm/results/fwp_hp_trip_res.csv
+            omc /workspace/build/build_trip_restart.mos | tee fwp_warm/results/build_trip_restart.log
+          test -x fwp_warm/results/fwp_hp_trip_restart
+
+      - name: Restart from solved state and run FWP-HP trip physics
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$PWD/fwp_warm/results:/work" \
+            -w /work \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            ./fwp_hp_trip_restart \
+              -iif=/work/fwp_hp_warm_res.mat \
+              -iit=300 \
+              -iim=none \
+              -noEventEmit \
+              -r=/work/fwp_hp_trip_raw.csv \
+              -lv=LOG_INIT,LOG_STATS | tee fwp_warm/results/trip_restart.log
+          test -s fwp_warm/results/fwp_hp_trip_raw.csv
+          grep -q "The simulation finished successfully" fwp_warm/results/trip_restart.log
 
       - name: Validate warm-started physical response
         shell: bash
@@ -148,7 +168,7 @@ jobs:
           from pathlib import Path
           import csv,json,math
 
-          p=Path('fwp_warm/results/fwp_hp_trip_res.csv')
+          p=Path('fwp_warm/results/fwp_hp_trip_raw.csv')
           with p.open(newline='',encoding='utf-8-sig') as f:
               r=csv.reader(f)
               raw_h=next(r)
@@ -234,7 +254,7 @@ jobs:
               'status':'pass',
               'simulation_success':True,
               'warm_state_used':True,
-              'restart_method':'iif/iit/iim=none + cvode',
+              'restart_method':'emit-protected snapshot + dedicated CVODE executable + iif/iit/iim=none',
               'raw_start_s':t[0],
               'raw_end_s':t[-1],
               'raw_rows':len(rows),
