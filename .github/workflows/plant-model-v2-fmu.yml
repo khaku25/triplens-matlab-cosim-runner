@@ -66,13 +66,24 @@ jobs:
             -w /repo \
             openmodelica/openmodelica:v1.27.0-minimal \
             omc /repo/plant_v2/build/fmu/export.mos | tee plant_v2/build/fmu/export.log
+
+          # OpenModelica runs as root in the container and may leave *.fmutmp
+          # directories unreadable to the hosted-runner user. Normalize only
+          # this generated build directory before inspecting/copying artifacts.
+          docker run --rm \
+            -v "$PWD:/repo" \
+            alpine:3.22 \
+            sh -c 'chmod -R a+rX /repo/plant_v2/build/fmu'
+
           echo '--- generated FMU files ---'
-          find plant_v2/build/fmu -maxdepth 3 -type f -printf '%P\n' | sort | head -200
+          find plant_v2/build/fmu -maxdepth 5 -type f -printf '%P\n' | sort | head -300
           canonical="plant_v2/build/fmu/TripLens_Plant_V2_CoSim.fmu"
           if [[ ! -s "$canonical" ]]; then
-            actual="$(find plant_v2/build/fmu -maxdepth 3 -type f -name '*.fmu' -print -quit)"
+            actual="$(find plant_v2/build/fmu -maxdepth 5 -type f -name '*.fmu' -print -quit)"
             if [[ -z "$actual" || ! -s "$actual" ]]; then
               echo 'translateModelFMU returned without a usable .fmu artifact' >&2
+              echo '--- FMU temp tree ---' >&2
+              find plant_v2/build/fmu -maxdepth 3 -printf '%M %P\n' | sort | tail -200 >&2 || true
               exit 1
             fi
             cp "$actual" "$canonical"
