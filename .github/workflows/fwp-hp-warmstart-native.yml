@@ -70,23 +70,21 @@ jobs:
           # head curve intersects the live HP header. At about 1288 rpm the
           # warm plant loses that algebraic operating point before Q reaches 0.
           # Upgrade only the existing PompeAlimHP instance to ThermoSysPro's
-          # equivalent CentrifugalPump formulation: mode_car=2 preserves the
-          # same a1/a3 and b1/b2 curves in the normal quadrant while supporting
-          # the off-design/reverse quadrant needed to reach NRV closure.
+          # DynamicCentrifugalPump. Its positive-speed/positive-flow equations
+          # use the same a1/a3 and b1/b2 curves, while Qv*abs(Qv) gives the
+          # off-design/reverse quadrant needed to reach passive NRV closure.
           pump_pat=re.compile(
               r'ThermoSysPro\.WaterSteam\.Machines\.StaticCentrifugalPump\s+PompeAlimHP\(.*?\)\s*'
               r'annotation\s*\(Placement\(transformation\(extent=\{\{771,-60\},\{791,-40\}\},\s*rotation=0\)\)\);',
               re.S)
           pump_repl=(
-              'ThermoSysPro.WaterSteam.Machines.CentrifugalPump PompeAlimHP(\n'
-              '    N=1400,\n'
-              '    N_nom=1400,\n'
-              '    mode_car=2,\n'
-              '    mode_car_hn=2,\n'
-              '    mode_car_Cr=2,\n'
-              '    hn_coef={-28056.2,1600},\n'
-              '    rh_coef={-12.7952660447433,3.61},\n'
-              '    dynamic_mech_equation=false,\n'
+              'ThermoSysPro.WaterSteam.Machines.DynamicCentrifugalPump PompeAlimHP(\n'
+              '    VRotn=1400,\n'
+              '    a3=1600,\n'
+              '    a1=-28056.2,\n'
+              '    b1=-12.7952660447433,\n'
+              '    b2=3.61,\n'
+              '    steady_state_mech=true,\n'
               '    dynamic_energy_balance=false,\n'
               '    continuous_flow_reversal=true,\n'
               '    Q(fixed=false),\n'
@@ -142,15 +140,15 @@ jobs:
               'trip_request_s':300.0,
               'breaker_open_reference_s':300.08,
               'pump':'PompeAlimHP',
-              'pump_model':'ThermoSysPro.WaterSteam.Machines.CentrifugalPump',
-              'normal_quadrant_curve_preserved':'mode_car=2 maps original a1/a3 and b1/b2 coefficients exactly',
-              'off_design_domain':'CentrifugalPump semi-parabolic formulation permits the Q=0 crossing required for passive NRV closure',
+              'pump_model':'ThermoSysPro.WaterSteam.Machines.DynamicCentrifugalPump',
+              'normal_quadrant_curve_preserved':'DynamicCentrifugalPump uses the original a1/a3 and b1/b2 coefficients in the positive quadrant',
+              'off_design_domain':'DynamicCentrifugalPump Qv*abs(Qv) formulation permits the Q=0 crossing required for passive NRV closure',
               'native_topology_modified':True,
               'new_motor_component_inserted':False,
               'native_discharge_check_valve_inserted':True,
               'native_shaft_speed_boundary_inserted':True,
               'r_and_d_discharge_isolation':'ThermoSysPro IdealCheckValve between PompeAlimHP and Vanne_alimentationMPHP1; generic virtual NRV, no field tag, not plant-approved',
-              'native_numerical_regularization':'PompeAlimHP uses ThermoSysPro CentrifugalPump mode_car=2 with the original positive-quadrant coefficients plus continuous flow reversal',
+              'native_numerical_regularization':'PompeAlimHP uses ThermoSysPro DynamicCentrifugalPump with the original positive-quadrant coefficients plus continuous flow reversal',
               'gt_boundary':'NORMAL_100 606.94 kg/s / 893.75 K',
               'coastdown_source':'R&D FWP virtual motor surrogate; tau approx 1 s, not plant-approved',
               'initialization':'emit-protected solved snapshot -> dedicated 300-420 CVODE executable with native discharge isolation'
@@ -210,7 +208,7 @@ jobs:
           buildModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_HP_WarmSeeded,
             startTime=300, stopTime=420, numberOfIntervals=1200, tolerance=1e-3,
             method="cvode", outputFormat="csv", fileNamePrefix="fwp_hp_trip_restart",
-            variableFilter="^(time|arretPomesHP\\.y\\.signal|PompeAlimHP\\.(Q|w_rpm)|CapteurDebitEauHP\\.Measure\\.signal|Ballon(HP|MP|BP)\\.(P|zl)|tripLensFwpHpDischargeNRV\\.ouvert)$");
+            variableFilter="^(time|arretPomesHP\\.y\\.signal|PompeAlimHP\\.(Q|VRot)|CapteurDebitEauHP\\.Measure\\.signal|Ballon(HP|MP|BP)\\.(P|zl)|tripLensFwpHpDischargeNRV\\.ouvert)$");
           getErrorString();
           MOS
           docker run --rm \
