@@ -379,7 +379,9 @@ jobs:
         run: |
           set -euo pipefail
           chosen=""
-          for solver in cvode ida dassl; do
+          for attempt in none_cvode none_dassl symbolic_dassl; do
+            init_method="${attempt%%_*}"
+            solver="${attempt#*_}"
             set +e
             timeout 12m docker run --rm \
               -v "$PWD/fwp_warm/results:/work" \
@@ -388,20 +390,23 @@ jobs:
               ./fwp_hp_closed_hold \
                 -iif=/work/fwp_hp_transition_state_res.mat \
                 -iit=301 \
-                -iim=symbolic \
+                -iim="$init_method" \
                 -s="$solver" \
                 -noEventEmit \
                 -initialStepSize=1e-4 \
                 -maxStepSize=0.1 \
-                -r="/work/fwp_hp_closed_hold_${solver}.csv" \
-                -lv=LOG_INIT,LOG_STATS,LOG_NLS \
-              | tee "fwp_warm/results/trip_closed_hold_${solver}.log"
+                -r="/work/fwp_hp_closed_hold_${attempt}.csv" \
+                -lv=LOG_INIT,LOG_STATS \
+              | tee "fwp_warm/results/trip_closed_hold_${attempt}.log"
             rc=${PIPESTATUS[0]}
             set -e
             if [[ "$rc" -eq 0 ]] && grep -q "The simulation finished successfully" \
-                "fwp_warm/results/trip_closed_hold_${solver}.log"; then
-              chosen="$solver"
+                "fwp_warm/results/trip_closed_hold_${attempt}.log"; then
+              chosen="$attempt"
               break
+            fi
+            if [[ -s "fwp_warm/results/fwp_hp_closed_hold_${attempt}.csv" ]]; then
+              tail -n 6 "fwp_warm/results/fwp_hp_closed_hold_${attempt}.csv"
             fi
           done
           test -n "$chosen"
@@ -411,10 +416,10 @@ jobs:
           python3 - "$chosen" <<'PY'
           import csv,sys
           from pathlib import Path
-          solver=sys.argv[1]
+          attempt=sys.argv[1]
           paths=[
               Path('fwp_warm/results/fwp_hp_transition_raw.csv'),
-              Path(f'fwp_warm/results/fwp_hp_closed_hold_{solver}.csv'),
+              Path(f'fwp_warm/results/fwp_hp_closed_hold_{attempt}.csv'),
           ]
           header=None
           combined=[]
@@ -586,8 +591,13 @@ jobs:
             fwp_warm/results/install.log
             fwp_warm/results/warm.log
             fwp_warm/results/build_trip_restart.log
-            fwp_warm/results/trip_restart.log
+            fwp_warm/results/trip_transition_*.log
+            fwp_warm/results/trip_closed_hold_*.log
+            fwp_warm/results/selected_solver.txt
             fwp_warm/results/fwp_hp_warm_res.mat
+            fwp_warm/results/fwp_hp_transition_state_res.mat
+            fwp_warm/results/fwp_hp_transition_raw.csv
+            fwp_warm/results/fwp_hp_closed_hold_*.csv
             fwp_warm/results/fwp_hp_trip_raw.csv
             fwp_warm/results/fwp_hp_warmstart_report.json
             fwp_warm/build/TripLens_FWP_HP_WarmSeeded.mo
