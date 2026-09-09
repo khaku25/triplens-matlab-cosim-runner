@@ -35,7 +35,7 @@ model TripLens_Plant_V2_Normal100
       Interval=0.1),
     __OpenModelica_simulationFlags(
       s="cvode",
-      iif="C:/TripLensWarm/normal_hold_res.mat",
+      iif="C:/TripLensStates/NORMAL_100/state.mat",
       iit="300",
       iim="none"));
 end TripLens_Plant_V2_Normal100;
