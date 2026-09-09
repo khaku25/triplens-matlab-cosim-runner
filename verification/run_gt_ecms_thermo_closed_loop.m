@@ -24,6 +24,7 @@ coreName = 'TripLens_ECMS_A_Logic_Core';
 corePath = fullfile(repo,'outputs',[coreName '.slx']);
 assert(isfile(corePath),'ECMS A-logic core was not generated.');
 addpath(fullfile(repo,'outputs'));
+load_system(corePath);
 
 mdl = 'TripLens_GT_ECMS_Thermo_ClosedLoop_Verification';
 if bdIsLoaded(mdl), bdclose(mdl); end
@@ -31,8 +32,10 @@ new_system(mdl);
 modelCleanup = onCleanup(@() closeModel(mdl)); %#ok<NASGU>
 
 ecms = [mdl '/ECMS_A_Logic'];
-add_block('built-in/ModelReference',ecms,'ModelName',coreName, ...
-    'Position',[390 90 670 500]);
+add_block('built-in/Subsystem',ecms,'Position',[390 90 670 500]);
+Simulink.SubSystem.deleteContents(ecms);
+Simulink.BlockDiagram.copyContentsToSubsystem(coreName,ecms);
+set_param(ecms,'TreatAsAtomicUnit','on');
 
 thermo = [mdl '/Thermo_CVODE_FMU'];
 add_block('simulink_extras/FMU Import/FMU',thermo,'FMUName',f.name, ...
