@@ -34,6 +34,9 @@ jobs:
           set -euo pipefail
           python3 legacy_exact/scripts/build_trip_tac_cosim.py
           test -s legacy_exact/build/TripLens_CombinedCycle_TripTAC_CoSim.mo
+          grep -q 'stTripCmd' legacy_exact/build/TripLens_CombinedCycle_TripTAC_CoSim.mo
+          grep -q 'TripLensSTTripValveSource ConstantVanneTurbineHP' legacy_exact/build/TripLens_CombinedCycle_TripTAC_CoSim.mo
+          grep -q 'TripLensSTTripValveSource ConstantVanneTurbineMP' legacy_exact/build/TripLens_CombinedCycle_TripTAC_CoSim.mo
 
       - name: Install Modelica 3.2.3
         shell: bash
@@ -81,20 +84,26 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import zipfile
+          import zipfile, xml.etree.ElementTree as ET
           p='legacy_exact/build/cosim/TripLens_CombinedCycle_TripTAC_CoSim.fmu'
           with zipfile.ZipFile(p) as z:
-              xml=z.read('modelDescription.xml').decode('utf-8')
-          required=[
-            'gtExhaustFlowCmd','gtExhaustTemperatureCmd','stElectricalPower',
-            'hpDrumLevel','ipDrumLevel','lpDrumLevel',
-            'hpDrumPressure','ipDrumPressure','lpDrumPressure']
-          missing=[x for x in required if x not in xml]
-          assert not missing, f'missing FMU variables: {missing}'
-          assert 'CoSimulation' in xml, 'not a Co-Simulation FMU'
+              raw=z.read('modelDescription.xml')
+          root=ET.fromstring(raw)
+          vars_=root.find('ModelVariables')
+          inputs=[v.attrib['name'] for v in vars_ if v.attrib.get('causality')=='input']
+          outputs=[v.attrib['name'] for v in vars_ if v.attrib.get('causality')=='output']
+          required_inputs=['gtExhaustFlowCmd','gtExhaustTemperatureCmd','stTripCmd']
+          required_outputs=['stElectricalPower','hpDrumLevel','ipDrumLevel','lpDrumLevel',
+                            'hpDrumPressure','ipDrumPressure','lpDrumPressure',
+                            'hpTurbineInletValveOpening','mpTurbineInletValveOpening']
+          assert inputs == required_inputs, f'unexpected FMU inputs: {inputs}'
+          missing=[x for x in required_outputs if x not in outputs]
+          assert not missing, f'missing FMU outputs: {missing}'
+          assert 'CoSimulation' in raw.decode('utf-8'), 'not a Co-Simulation FMU'
           print('TRIPTAC COSIM FMU PASS')
-          print('inputs: gtExhaustFlowCmd, gtExhaustTemperatureCmd')
-          print('outputs:', ', '.join(required[2:]))
+          print('inputs:', ', '.join(inputs))
+          print('outputs:', ', '.join(required_outputs))
+          print('physical ST trip: stTripCmd -> HP/MP turbine admission valves')
           PY
 
       - name: Upload FMU
