@@ -278,7 +278,7 @@ jobs:
           test -s fwp_warm/results/fwp_hp_warm_res.mat
           grep -q "The simulation finished successfully" fwp_warm/results/warm.log
 
-      - name: Build dedicated 300-to-420 CVODE restart executable
+      - name: Build transition and post-transition executables
         shell: bash
         run: |
           set -euo pipefail
@@ -289,8 +289,18 @@ jobs:
           loadFile("/workspace/build/TripLens_FWP_HP_TripRuntime.mo"); getErrorString();
           cd("/workspace/results");
           buildModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_HP_TripRuntime,
-            startTime=300, stopTime=420, numberOfIntervals=1200, tolerance=1e-3,
-            method="cvode", outputFormat="csv", fileNamePrefix="fwp_hp_trip_restart",
+            startTime=300, stopTime=301, numberOfIntervals=1000, tolerance=1e-3,
+            method="dassl", outputFormat="mat", fileNamePrefix="fwp_hp_transition_state",
+            variableFilter=".*");
+          getErrorString();
+          buildModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_HP_TripRuntime,
+            startTime=300, stopTime=301, numberOfIntervals=10, tolerance=1e-3,
+            method="dassl", outputFormat="csv", fileNamePrefix="fwp_hp_transition_raw",
+            variableFilter="^(time|arretPomesHP\\.y\\.signal|PompeAlimHP\\.Q|CapteurDebitEauHP\\.Measure\\.signal|Ballon(HP|MP|BP)\\.(P|zl)|tripLensFwpHpDischargeNRV\\.opening)$");
+          getErrorString();
+          buildModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_HP_TripRuntime,
+            startTime=301, stopTime=420, numberOfIntervals=1190, tolerance=1e-3,
+            method="cvode", outputFormat="csv", fileNamePrefix="fwp_hp_post_transition",
             variableFilter="^(time|arretPomesHP\\.y\\.signal|PompeAlimHP\\.Q|CapteurDebitEauHP\\.Measure\\.signal|Ballon(HP|MP|BP)\\.(P|zl)|tripLensFwpHpDischargeNRV\\.opening)$");
           getErrorString();
           MOS
@@ -299,50 +309,105 @@ jobs:
             -v "$PWD/fwp_warm:/workspace" -w /workspace \
             openmodelica/openmodelica:v1.27.0-minimal \
             omc /workspace/build/build_trip_restart.mos | tee fwp_warm/results/build_trip_restart.log
-          test -x fwp_warm/results/fwp_hp_trip_restart
+          test -x fwp_warm/results/fwp_hp_transition_state
+          test -x fwp_warm/results/fwp_hp_transition_raw
+          test -x fwp_warm/results/fwp_hp_post_transition
 
-      - name: Restart from solved state and run FWP-HP trip physics
+      - name: Cross the 300-to-301 second HP trip transition
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout 15m docker run --rm \
+            -v "$PWD/fwp_warm/results:/work" \
+            -w /work \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            ./fwp_hp_transition_state \
+              -iif=/work/fwp_hp_warm_res.mat \
+              -iit=300 \
+              -iim=none \
+              -s=dassl \
+              -noEventEmit \
+              -emit_protected \
+              -initialStepSize=1e-5 \
+              -maxStepSize=0.001 \
+              -r=/work/fwp_hp_transition_state_res.mat \
+              -lv=LOG_INIT,LOG_STATS,LOG_NLS \
+            | tee fwp_warm/results/trip_transition_state.log
+          grep -q "The simulation finished successfully" \
+            fwp_warm/results/trip_transition_state.log
+          test -s fwp_warm/results/fwp_hp_transition_state_res.mat
+
+          timeout 15m docker run --rm \
+            -v "$PWD/fwp_warm/results:/work" \
+            -w /work \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            ./fwp_hp_transition_raw \
+              -iif=/work/fwp_hp_warm_res.mat \
+              -iit=300 \
+              -iim=none \
+              -s=dassl \
+              -noEventEmit \
+              -initialStepSize=1e-5 \
+              -maxStepSize=0.001 \
+              -r=/work/fwp_hp_transition_raw.csv \
+              -lv=LOG_INIT,LOG_STATS \
+            | tee fwp_warm/results/trip_transition_raw.log
+          grep -q "The simulation finished successfully" \
+            fwp_warm/results/trip_transition_raw.log
+          test -s fwp_warm/results/fwp_hp_transition_raw.csv
+
+      - name: Run 301-to-420 second post-transition physics
         shell: bash
         run: |
           set -euo pipefail
           chosen=""
-          for solver in ida dassl; do
+          for solver in cvode ida dassl; do
             set +e
-            timeout 20m docker run --rm \
+            timeout 15m docker run --rm \
               -v "$PWD/fwp_warm/results:/work" \
               -w /work \
               openmodelica/openmodelica:v1.27.0-minimal \
-              ./fwp_hp_trip_restart \
-                -iif=/work/fwp_hp_warm_res.mat \
-                -iit=300 \
+              ./fwp_hp_post_transition \
+                -iif=/work/fwp_hp_transition_state_res.mat \
+                -iit=301 \
                 -iim=none \
                 -s="$solver" \
                 -noEventEmit \
                 -initialStepSize=1e-4 \
-                -maxStepSize=0.01 \
-                -r="/work/fwp_hp_trip_raw_${solver}.csv" \
+                -maxStepSize=0.1 \
+                -r="/work/fwp_hp_post_transition_${solver}.csv" \
                 -lv=LOG_INIT,LOG_STATS,LOG_NLS \
-              | tee "fwp_warm/results/trip_restart_${solver}.log"
+              | tee "fwp_warm/results/trip_post_transition_${solver}.log"
             rc=${PIPESTATUS[0]}
             set -e
             if [[ "$rc" -eq 0 ]] && grep -q "The simulation finished successfully" \
-                "fwp_warm/results/trip_restart_${solver}.log"; then
-              mv "fwp_warm/results/fwp_hp_trip_raw_${solver}.csv" \
-                 fwp_warm/results/fwp_hp_trip_raw.csv
-            fwp_warm/results/fwp_hp_trip_raw_*.csv
-              cp "fwp_warm/results/trip_restart_${solver}.log" \
-                 fwp_warm/results/trip_restart.log
-            fwp_warm/results/trip_restart_*.log
-            fwp_warm/results/selected_solver.txt
+                "fwp_warm/results/trip_post_transition_${solver}.log"; then
               chosen="$solver"
               break
             fi
-            if [[ -s "fwp_warm/results/fwp_hp_trip_raw_${solver}.csv" ]]; then
-              tail -n 6 "fwp_warm/results/fwp_hp_trip_raw_${solver}.csv"
-            fi
           done
           test -n "$chosen"
-          printf '%s\n' "$chosen" > fwp_warm/results/selected_solver.txt
+          printf 'dassl-transition+%s-remainder\n' "$chosen" \
+            > fwp_warm/results/selected_solver.txt
+
+          python3 - "$chosen" <<'PY'
+          import csv,sys
+          from pathlib import Path
+          solver=sys.argv[1]
+          first=Path('fwp_warm/results/fwp_hp_transition_raw.csv')
+          second=Path(f'fwp_warm/results/fwp_hp_post_transition_{solver}.csv')
+          target=Path('fwp_warm/results/fwp_hp_trip_raw.csv')
+          with first.open(newline='',encoding='utf-8-sig') as f:
+              r=csv.reader(f); h1=next(r); rows1=list(r)
+          with second.open(newline='',encoding='utf-8-sig') as f:
+              r=csv.reader(f); h2=next(r); rows2=list(r)
+          if h1 != h2:
+              raise SystemExit('transition/remainder RAW headers differ')
+          rows2=[row for row in rows2 if float(row[0].strip('"')) > 301.0000001]
+          with target.open('w',newline='',encoding='utf-8') as f:
+              w=csv.writer(f); w.writerow(h1); w.writerows(rows1); w.writerows(rows2)
+          print('COMBINED_RAW_ROWS',len(rows1)+len(rows2))
+          PY
           test -s fwp_warm/results/fwp_hp_trip_raw.csv
 
       - name: Validate warm-started physical response
