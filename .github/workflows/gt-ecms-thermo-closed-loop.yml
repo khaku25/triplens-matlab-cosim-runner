@@ -1,0 +1,51 @@
+name: Isolated GT ECMS Thermo Closed-Loop Verification
+
+on:
+  push:
+    branches:
+      - codex/cosim-verify-20260909
+    paths:
+      - 'verification/run_gt_ecms_thermo_closed_loop.m'
+      - '.github/workflows/gt-ecms-thermo-closed-loop.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: codex-isolated-gt-ecms-thermo-closed-loop
+  cancel-in-progress: false
+
+jobs:
+  verify-closed-loop:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 60
+    steps:
+      - name: Check out isolated verification branch
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download proven Windows CVODE FMU
+        uses: actions/download-artifact@v4
+        with:
+          name: cvode-build-win64-4
+          run-id: 34233967732
+          github-token: ${{ github.token }}
+          path: verification_outputs
+
+      - name: Run one-model ECMS Thermo closed-loop verification
+        shell: cmd
+        run: |
+          "C:\Program Files\MATLAB\R2025b\bin\matlab.exe" -batch "cd(getenv('GITHUB_WORKSPACE')); addpath(fullfile(pwd,'verification')); run_gt_ecms_thermo_closed_loop"
+
+      - name: Upload same-run RAW data and verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gt-ecms-thermo-closed-loop-${{ github.run_number }}
+          path: |
+            verification_outputs/
+            outputs/ecms_a_logic_core_report.json
+          if-no-files-found: warn
+          retention-days: 30
