@@ -1,10 +1,6 @@
 name: FWP-HP Warm-Start Native Physics
 
 on:
-  push:
-    branches: [integrate/plant-v2-fwp-hp-validated]
-    paths:
-      - '.github/workflows/fwp-hp-warmstart-native.yml'
   workflow_dispatch:
 
 permissions:
