@@ -1,12 +1,6 @@
 name: Plant Model v2 NORMAL_100 Golden State
 
 on:
-  push:
-    branches: [integrate/plant-v2-fwp-hp-validated]
-    paths:
-      - 'plant_v2/modelica/TripLens_Plant_V2_Normal100.mo'
-      - 'plant_v2/scripts/install_normal100_windows.ps1'
-      - '.github/workflows/plant-model-v2-normal100-capture.yml'
   workflow_dispatch:
     inputs:
       install_windows:
