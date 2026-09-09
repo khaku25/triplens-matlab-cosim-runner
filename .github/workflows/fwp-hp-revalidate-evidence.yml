@@ -1,0 +1,106 @@
+name: FWP-HP Evidence Revalidation
+
+on:
+  push:
+    branches: [integration/validated-stack-20260909]
+    paths:
+      - '.github/workflows/fwp-hp-revalidate-evidence.yml'
+      - 'plant_v2/scripts/normalize_fwp_hp_raw.py'
+      - 'plant_v2/scripts/validate_fwp_hp_raw.py'
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Successful physical-evidence workflow run ID
+        required: true
+        default: '34366779559'
+      source_artifact:
+        description: Artifact name from the physical-evidence run
+        required: true
+        default: 'fwp-hp-warmstart-native-38'
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  SOURCE_RUN_ID: ${{ github.event.inputs.source_run_id || '34366779559' }}
+  SOURCE_ARTIFACT: ${{ github.event.inputs.source_artifact || 'fwp-hp-warmstart-native-38' }}
+
+jobs:
+  revalidate-hp-fwp-evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download completed HP-FWP physical evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.SOURCE_ARTIFACT }}
+          path: source_evidence
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+
+      - name: Verify source physical simulation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s source_evidence/results/fwp_hp_transition_raw.csv
+          test -s source_evidence/results/fwp_hp_closed_hold_none_dassl.csv
+          test -s source_evidence/results/contract.json
+          grep -q "The simulation finished successfully"             source_evidence/results/trip_closed_hold_none_dassl.log
+          tail -n 1 source_evidence/results/fwp_hp_closed_hold_none_dassl.csv
+
+      - name: Compile evidence adapters
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile             plant_v2/scripts/normalize_fwp_hp_raw.py             plant_v2/scripts/validate_fwp_hp_raw.py
+
+      - name: Normalize compiler-eliminated boundary alias
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p revalidated
+          python3 plant_v2/scripts/normalize_fwp_hp_raw.py             --transition source_evidence/results/fwp_hp_transition_raw.csv             --post source_evidence/results/fwp_hp_closed_hold_none_dassl.csv             --contract source_evidence/results/contract.json             --output revalidated/fwp_hp_trip_raw.csv             --provenance revalidated/fwp_hp_raw_provenance.json
+
+      - name: Validate full HP-FWP physical response
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 plant_v2/scripts/validate_fwp_hp_raw.py             --raw revalidated/fwp_hp_trip_raw.csv             --contract source_evidence/results/contract.json             --provenance revalidated/fwp_hp_raw_provenance.json             --report revalidated/fwp_hp_warmstart_report.json
+
+      - name: Publish job summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## HP-FWP evidence revalidation"
+            echo
+            echo "- source run: ${SOURCE_RUN_ID}"
+            echo "- source artifact: ${SOURCE_ARTIFACT}"
+            if [[ -s revalidated/fwp_hp_warmstart_report.json ]]; then
+              echo "- result: PASS"
+              echo
+              echo '~~~json'
+              cat revalidated/fwp_hp_warmstart_report.json
+              echo '~~~'
+            else
+              echo "- result: FAIL"
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload revalidated evidence
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fwp-hp-revalidated-${{ github.run_number }}
+          path: |
+            source_evidence/results/contract.json
+            source_evidence/results/trip_closed_hold_none_dassl.log
+            revalidated/fwp_hp_trip_raw.csv
+            revalidated/fwp_hp_raw_provenance.json
+            revalidated/fwp_hp_warmstart_report.json
+          if-no-files-found: warn
+          retention-days: 30
