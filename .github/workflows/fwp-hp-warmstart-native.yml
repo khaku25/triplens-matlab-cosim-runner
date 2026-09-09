@@ -243,7 +243,7 @@ jobs:
               -iim=none \
               -noEventEmit \
               -r=/work/fwp_hp_trip_raw.csv \
-              -lv=LOG_INIT,LOG_STATS | tee fwp_warm/results/trip_restart.log
+              -lv=LOG_STATS | tee fwp_warm/results/trip_restart.log
           test -s fwp_warm/results/fwp_hp_trip_raw.csv
           grep -q "The simulation finished successfully" fwp_warm/results/trip_restart.log
 
