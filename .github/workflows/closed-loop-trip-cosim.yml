@@ -43,7 +43,7 @@ jobs:
       - name: Build dashboard, install protection, wire closed loop, and regress
         shell: cmd
         run: |
-          "C:\Program Files\MATLAB\R2025b\bin\matlab.exe" -batch "addpath(fullfile(getenv('GITHUB_WORKSPACE'),'matlab')); build_triptac_cosim_dashboard; addpath(fullfile(getenv('GITHUB_WORKSPACE'),'ecms_logic')); build_a_logic_core; install_a_logic_into_ecms; addpath(fullfile(getenv('GITHUB_WORKSPACE'),'matlab')); build_closed_loop_trip_cosim; addpath(fullfile(getenv('GITHUB_WORKSPACE'),'ecms_logic')); export_ecms_traceability"
+          "C:\Program Files\MATLAB\R2025b\bin\matlab.exe" -batch "addpath(fullfile(getenv('GITHUB_WORKSPACE'),'matlab')); build_triptac_cosim_dashboard; addpath(fullfile(getenv('GITHUB_WORKSPACE'),'ecms_logic')); build_a_logic_core; install_a_logic_into_ecms; addpath(fullfile(getenv('GITHUB_WORKSPACE'),'matlab')); build_closed_loop_trip_cosim; fix_first_order_alarm_timing; addpath(fullfile(getenv('GITHUB_WORKSPACE'),'ecms_logic')); export_ecms_traceability"
 
       - name: Upload closed-loop physical-trip evidence
         if: always()
@@ -55,6 +55,7 @@ jobs:
             outputs/ecms_a_logic_core_report.json
             outputs/ecms_a_logic_install_report.json
             outputs/closed_loop_trip_cosim_report.json
+            outputs/first_order_alarm_timing_report.json
             outputs/ecms_port_traceability.csv
             outputs/ecms_traceability_report.json
             outputs/ecms_traceability_report.html
