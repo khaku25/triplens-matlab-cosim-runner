@@ -29,13 +29,24 @@ projectDir=fullfile(mdrive,'TripLens_ECMS_DigitalTwin');
 modelPath=fullfile(projectDir,[modelName '.slx']);
 assert(isfile(modelPath),'TripLens:ModelMissing','Missing %s',modelPath);
 
-% The integrated model contains Model blocks that reference the generated
-% A-logic and FWP operation cores. Resolve those references before load/update.
+% The integrated model contains Model blocks that reference generated ECMS
+% cores and an FMU block that resolves the copied TripTAC FMU by filename.
+% Resolve both locations before load/update; otherwise Simulink can load the
+% parent but fails its diagram update before this installer can save changes.
 modelsDir=fullfile(projectDir,'models');
+fmuDir=fullfile(projectDir,'fmu');
 assert(isfolder(modelsDir),'TripLens:ReferencedModelsMissing','Missing referenced-model directory %s',modelsDir);
+assert(isfolder(fmuDir),'TripLens:FMUDirectoryMissing','Missing FMU directory %s',fmuDir);
+assert(isfile(fullfile(fmuDir,'TripLens_CombinedCycle_TripTAC_CoSim.fmu')), ...
+    'TripLens:FMUMissing','Missing TripTAC FMU in %s',fmuDir);
 addpath(modelsDir,'-begin');
-pathCleanup=onCleanup(@()safeRmpath(modelsDir)); %#ok<NASGU>
-if isfolder(outDir), addpath(outDir,'-begin'); end
+modelsPathCleanup=onCleanup(@()safeRmpath(modelsDir)); %#ok<NASGU>
+addpath(fmuDir,'-begin');
+fmuPathCleanup=onCleanup(@()safeRmpath(fmuDir)); %#ok<NASGU>
+if isfolder(outDir)
+    addpath(outDir,'-begin');
+    outPathCleanup=onCleanup(@()safeRmpath(outDir)); %#ok<NASGU>
+end
 
 if bdIsLoaded(modelName), close_system(modelName,0); end
 load_system(modelPath); cleanup=onCleanup(@()close_system(modelName,0)); %#ok<NASGU>
@@ -129,6 +140,7 @@ report.st_breaker_feedback='Generator_Breaker_State/52ST_CLOSED -> Protection_Co
 report.reset_recloses_breaker=false;
 report.st_valve_closure='SECONDARY_SHUTDOWN_EFFECT_NOT_TRIP_DEFINITION';
 report.referenced_models_path=modelsDir;
+report.fmu_path=fullfile(fmuDir,'TripLens_CombinedCycle_TripTAC_CoSim.fmu');
 report.structural_pass=true;
 report.note=['GT/ST Trip requests still resolve in Common_Trip_Matrix. The breaker actuator latches CLOSED from 1 to 0 when ' ...
     'the delayed breaker trip command operates. The old GT 150/550 path is now controlled only by GT_Derate_CMD.'];
