@@ -25,8 +25,18 @@ if isempty(mdrive)
 end
 assert(~isempty(mdrive) && isfolder(mdrive),'TripLens:MATLABDriveUnavailable');
 modelName='TripLens_ECMS_DigitalTwin';
-modelPath=fullfile(mdrive,'TripLens_ECMS_DigitalTwin',[modelName '.slx']);
+projectDir=fullfile(mdrive,'TripLens_ECMS_DigitalTwin');
+modelPath=fullfile(projectDir,[modelName '.slx']);
 assert(isfile(modelPath),'TripLens:ModelMissing','Missing %s',modelPath);
+
+% The integrated model contains Model blocks that reference the generated
+% A-logic and FWP operation cores. Resolve those references before load/update.
+modelsDir=fullfile(projectDir,'models');
+assert(isfolder(modelsDir),'TripLens:ReferencedModelsMissing','Missing referenced-model directory %s',modelsDir);
+addpath(modelsDir,'-begin');
+pathCleanup=onCleanup(@()safeRmpath(modelsDir)); %#ok<NASGU>
+if isfolder(outDir), addpath(outDir,'-begin'); end
+
 if bdIsLoaded(modelName), close_system(modelName,0); end
 load_system(modelPath); cleanup=onCleanup(@()close_system(modelName,0)); %#ok<NASGU>
 
@@ -118,6 +128,7 @@ report.gt_breaker_feedback='Generator_Breaker_State/52GT_CLOSED -> Protection_Co
 report.st_breaker_feedback='Generator_Breaker_State/52ST_CLOSED -> Protection_Control/cb_52st_closed_fb';
 report.reset_recloses_breaker=false;
 report.st_valve_closure='SECONDARY_SHUTDOWN_EFFECT_NOT_TRIP_DEFINITION';
+report.referenced_models_path=modelsDir;
 report.structural_pass=true;
 report.note=['GT/ST Trip requests still resolve in Common_Trip_Matrix. The breaker actuator latches CLOSED from 1 to 0 when ' ...
     'the delayed breaker trip command operates. The old GT 150/550 path is now controlled only by GT_Derate_CMD.'];
@@ -203,6 +214,13 @@ try
         src=get_param(h,'SrcPortHandle'); dst=get_param(h,'DstPortHandle');
         if src==-1 || isempty(dst) || any(dst==-1), delete_line(h); end
     end
+catch
+end
+end
+
+function safeRmpath(p)
+try
+    if contains(path,p), rmpath(p); end
 catch
 end
 end
