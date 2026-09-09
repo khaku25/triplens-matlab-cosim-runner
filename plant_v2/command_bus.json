@@ -1,0 +1,99 @@
+{
+  "schema_version": "1.1",
+  "command_bus": {
+    "discrete": {
+      "START": {
+        "requires_target": true,
+        "semantics": "request equipment start after permissives; never closes breaker implicitly"
+      },
+      "STOP": {
+        "requires_target": true,
+        "semantics": "normal stop; remove run enable; breaker remains in its existing state unless separate logic says otherwise"
+      },
+      "TRIP": {
+        "requires_target": true,
+        "semantics": "protection trip request; success requires associated breaker CLOSED feedback = 0; analog process reduction alone is not Trip"
+      },
+      "RESET": {
+        "requires_target": true,
+        "semantics": "clear latched trip only when reset permissives pass; no automatic restart or breaker close"
+      },
+      "BREAKER_OPEN": {
+        "requires_target": true,
+        "semantics": "explicit breaker open command"
+      },
+      "BREAKER_CLOSE": {
+        "requires_target": true,
+        "semantics": "explicit breaker close command; independent of START"
+      },
+      "DERATE": {
+        "requires_target": true,
+        "semantics": "reduce process boundary/load while generator breaker remains CLOSED; never alias to TRIP"
+      }
+    },
+    "analog": {
+      "VALVE_POSITION": {
+        "requires_target": true,
+        "unit": "pu",
+        "valid_range": [0.0, 1.0],
+        "status": "reserved_until_named_valve_binding_exists"
+      }
+    }
+  },
+  "equipment": {
+    "GT": {
+      "trip_result_feedback": "52GT.CLOSED",
+      "trip_success_value": 0,
+      "derate_physics_inputs": ["gtExhaustFlowCmd", "gtExhaustTemperatureCmd"],
+      "validated_derate_point": {"mass_flow_kg_s": 150.0, "temperature_k": 550.0},
+      "native_trip_shutdown_adapter": null,
+      "status": "trip_electrical_validated_derate_physics_validated_native_gt_shutdown_pending"
+    },
+    "ST": {
+      "trip_result_feedback": "52ST.CLOSED",
+      "trip_success_value": 0,
+      "secondary_physics_input": "stTripCmd",
+      "secondary_physics_effect": "close HP/MP turbine admission-valve commands and solve ThermoSysPro rundown",
+      "status": "active"
+    },
+    "FWP_HP": {
+      "physics_input": "fwpHpSpeedCmd",
+      "rated_speed_rpm": 1400.0,
+      "operation_adapter": "ecms_pump_logic/build_fwp_hp_operation.m",
+      "operation_to_physics": "thermo_speed_input_rpm -> fwpHpSpeedCmd",
+      "trip_result_feedback": "VCB-A01.CLOSED",
+      "trip_success_value": 0,
+      "status": "active"
+    },
+    "FWP_IP": {
+      "physics_input": "fwpIpSpeedCmd",
+      "rated_speed_rpm": 1400.0,
+      "operation_adapter": null,
+      "status": "physics_port_active_command_adapter_pending"
+    },
+    "FWP_LP": {
+      "physics_input": "fwpLpSpeedCmd",
+      "rated_speed_rpm": 1400.0,
+      "operation_adapter": null,
+      "status": "physics_port_active_command_adapter_pending"
+    }
+  },
+  "non_executable_reserved_equipment": {
+    "CONDENSATE_PUMP": "No standalone physical component in the pinned ThermoSysPro model; do not expose commands.",
+    "CW_PUMP": "No dedicated circulating-water pump component in the pinned ThermoSysPro model; do not expose commands."
+  },
+  "time_contract": {
+    "thermo_nominal_exchange_s": 0.1,
+    "ecms_logic_step_s": 0.001,
+    "delay_evaluation": "elapsed simulation time, not sample count"
+  },
+  "event_record_fields": [
+    "time_s",
+    "target",
+    "command",
+    "value",
+    "source",
+    "request_id"
+  ],
+  "blind_policy": "command records may contain actual user/logic commands but must not contain expected root-cause or answer labels"
+}
