@@ -1,0 +1,170 @@
+name: GT Trip Native-Seeded 3-Input Revalidation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ci/build_native_seed_fmu.py'
+      - 'ci/cvode/build_cvode_fmu_from_seed_manifest.py'
+      - 'ci/gt_trip_revalidation_20260909.py'
+      - '.github/workflows/gt-trip-native-seeded-revalidation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: gt-trip-native-seeded-3input-revalidation
+  cancel-in-progress: true
+
+jobs:
+  prepare-current-native-seed:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download exact solved native t=0 state
+        uses: actions/download-artifact@v4
+        with:
+          name: triptac-native-full-state-1
+          run-id: 34220970632
+          github-token: ${{ github.token }}
+          path: native_state
+
+      - name: Download exact validated 3-input GT/ST source FMU
+        uses: actions/download-artifact@v4
+        with:
+          name: triplens-triptac-cosim-fmu-7
+          repository: khaku25/triplens-matlab-cosim-runner
+          run-id: 34308733698
+          github-token: ${{ github.token }}
+          path: source_3input
+
+      - name: Apply proven native t=0 seeds and validated NLS correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install 'scipy==1.16.1'
+          NATIVE="$(find native_state -name native_full_res.mat -print -quit)"
+          FMU="$(find source_3input -name TripLens_CombinedCycle_TripTAC_CoSim.fmu -print -quit)"
+          test -n "$NATIVE" && test -n "$FMU"
+          python3 ci/build_native_seed_fmu.py \
+            --source-fmu "$FMU" \
+            --native-mat "$NATIVE" \
+            --source-profile current-3input \
+            --source-run-id 34308733698 \
+            --out seeded_3input \
+            2>&1 | tee seeded_3input_prepare.log
+          grep -q 'NATIVE_SEEDED_SOURCE_FMU_PREPARED_NOT_YET_EXECUTED' seeded_3input_prepare.log
+          python3 - <<'PY'
+          import json
+          p=json.load(open('seeded_3input/native_seed_manifest.json'))
+          assert p['profile']=='current-3input'
+          assert p['source_fmu_run']==34308733698
+          assert p['real_variable_seeds']>=8400
+          assert p['calculated_parameter_seeds']==61
+          print('CURRENT_3INPUT_NATIVE_SEED_PREP_PASS')
+          PY
+
+      - name: Preserve current 3-input seeded source
+        uses: actions/upload-artifact@v4
+        with:
+          name: current-3input-native-seeded-source-${{ github.run_number }}
+          path: |
+            seeded_3input/
+            seeded_3input_prepare.log
+          if-no-files-found: error
+          retention-days: 30
+
+  build-current-cvode-linux:
+    needs: prepare-current-native-seed
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: current-3input-native-seeded-source-${{ github.run_number }}
+          path: seeded_3input
+
+      - name: Build same proven CVODE runtime around current 3-input seed
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'set(CMAKE_C_FLAGS_RELEASE "-O0 -DNDEBUG" CACHE STRING "Diagnostic build" FORCE)' > "$RUNNER_TEMP/cvode_compile_flags.cmake"
+          export CMAKE_TOOLCHAIN_FILE="$RUNNER_TEMP/cvode_compile_flags.cmake"
+          python3 -m py_compile ci/cvode/build_cvode_fmu.py ci/cvode/build_cvode_fmu_from_seed_manifest.py ci/cvode_allocator_fix.py
+          python3 ci/cvode/build_cvode_fmu_from_seed_manifest.py \
+            --seed-fmu seeded_3input/TripLens_CombinedCycle_TripTAC_CoSim.fmu \
+            --seed-manifest seeded_3input/native_seed_manifest.json \
+            --work cvode_3input_work \
+            --out cvode_3input_build \
+            --platform linux64 \
+            2>&1 | tee cvode_3input_build.log
+          grep -q 'CURRENT_3INPUT_NATIVE_SEED_CVODE_BUILD_COMPLETE_SIMULATION_NOT_YET_VERIFIED' cvode_3input_build.log
+
+      - name: Preserve current CVODE build
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: current-3input-cvode-linux-${{ github.run_number }}
+          path: |
+            cvode_3input_build/
+            cvode_3input_build.log
+          if-no-files-found: warn
+          retention-days: 30
+
+  gt-trip-physical-revalidation:
+    needs: build-current-cvode-linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      TRIPLENS_USE_NATIVE_SEED: '1'
+      TRIPLENS_RETAIN_VALIDATED_NLS_GUESS: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: current-3input-cvode-linux-${{ github.run_number }}
+          path: cvode_3input_build
+
+      - name: Install independent FMI importer
+        run: python3 -m pip install 'fmpy==0.3.22' 'numpy<3'
+
+      - name: Revalidate GT Trip with ST physical trip held at zero
+        shell: bash
+        run: |
+          set -euo pipefail
+          FMU="$(find cvode_3input_build -name 'TripLens_CombinedCycle_TripTAC_CoSim_linux64.fmu' -print -quit)"
+          test -n "$FMU"
+          mkdir -p gt_trip_native_seeded_results
+          python3 ci/gt_trip_revalidation_20260909.py \
+            --fmu "$FMU" \
+            --out gt_trip_native_seeded_results \
+            --trip-at 5 \
+            --stop 125 \
+            --step 0.1 \
+            2>&1 | tee gt_trip_native_seeded_results/execution.log
+          grep -q 'NATIVE_WARM_SEEDS_APPLIED=' gt_trip_native_seeded_results/execution.log
+          grep -q 'TRIPLENS_FMI_INTERNAL_SOLVER=cvode' gt_trip_native_seeded_results/execution.log
+          grep -q 'GT_REVALIDATION_INITIALIZATION_PASS' gt_trip_native_seeded_results/execution.log
+          grep -q 'GT_TRIP_PHYSICAL_REVALIDATION_PASS' gt_trip_native_seeded_results/execution.log
+
+      - name: Preserve GT Trip physical evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gt-trip-native-seeded-3input-${{ github.run_number }}
+          path: gt_trip_native_seeded_results/
+          if-no-files-found: warn
+          retention-days: 30
