@@ -1,0 +1,527 @@
+name: FWP-HP Warm-Start Native Physics
+
+on:
+  push:
+    branches: [integrate/plant-v2-fwp-hp-validated]
+    paths:
+      - '.github/workflows/fwp-hp-warmstart-native.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fwp-hp-native-split4-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fwp-hp-warmstart-native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 105
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare pinned ThermoSysPro
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf fwp_warm
+          mkdir -p fwp_warm/vendor fwp_warm/build fwp_warm/results fwp_warm/omhome
+          git clone --no-checkout https://github.com/Dwarf-Planet-Project/ThermoSysPro.git fwp_warm/vendor/ThermoSysPro
+          git -C fwp_warm/vendor/ThermoSysPro checkout --detach db81ae1b5a6a85f6c6c7693244cafa6087e18ff5
+
+      - name: Build HP-FWP test model with regularized discharge isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,re
+          src=Path('fwp_warm/vendor/ThermoSysPro/ThermoSysPro/Examples/CombinedCyclePowerPlant/CombinedCycle_TripTAC.mo')
+          txt=src.read_text(encoding='utf-8')
+          txt=txt.replace('model CombinedCycle_TripTAC\n','model TripLens_FWP_HP_WarmSeeded\n',1)
+          txt=txt.replace('end CombinedCycle_TripTAC;','end TripLens_FWP_HP_WarmSeeded;',1)
+
+          # NORMAL_100 only. 150/550 is DERATING and never used as Trip here.
+          txt=txt.replace('Table=[0,606.94; 10,606.94; 600,\n        50; 650,50]',
+                          'Table=[0,606.94; 1000,606.94]',1)
+          txt=txt.replace('Table=[0,893.75; 10,893.75; 600,423; 650,423]',
+                          'Table=[0,893.75; 1000,893.75]',1)
+
+          # Preserve the native PompeAlimHP and original hydraulic topology.
+          # Replace only its already-existing RPM source with the separately
+          # validated R&D motor coast-down trajectory after a 300 s warm hold.
+          pat=re.compile(
+              r'ThermoSysPro\.InstrumentationAndControl\.Blocks\.Sources\.Rampe\s+arretPomesHP\(\s*'
+              r'Initialvalue=1400,\s*Starttime=4000,\s*Duration=1000,\s*Finalvalue=700\)')
+          table=[
+              [0,1400],[300.08,1400],[300.5,920],[301,500],[302,185],
+              [303,68],[304,25],[305,9],[306,3.4],[307,1.25],[308,0.46],
+              [310,0],[420,0]
+          ]
+          rows='; '.join(f'{t},{rpm}' for t,rpm in table)
+          repl=(
+              'ThermoSysPro.InstrumentationAndControl.Blocks.Tables.Table1DTemps arretPomesHP(\n'
+              f'    Table=[{rows}], option_interpolation=1)')
+          txt,n=pat.subn(repl,txt,count=1)
+          if n!=1: raise SystemExit(f'HP speed source replacement count={n}')
+
+          # The native static pump changes its enthalpy transport equation at
+          # zero flow. Enable its built-in Qeps smoothing for the HP pump only;
+          # this adds no component and does not change the hydraulic topology.
+          pump_pat=re.compile(
+              r'(ThermoSysPro\.WaterSteam\.Machines\.StaticCentrifugalPump\s+PompeAlimHP\(\s*)')
+          txt,n=pump_pat.subn(
+              r'\1continuous_flow_reversal=true,\n    ',
+              txt,
+              count=1)
+          if n!=1: raise SystemExit(f'HP native flow-regularization count={n}')
+
+          # The original downstream HP admission valve sees the same flow cross
+          # zero during coastdown. Enable its library-provided Qeps smoothing so
+          # the enthalpy equation does not switch discontinuously at Q=0.
+          valve_pat=re.compile(
+              r'(ThermoSysPro\.WaterSteam\.PressureLosses\.ControlValve\s+'
+              r'Vanne_alimentationMPHP1\(\s*)')
+          txt,n=valve_pat.subn(
+              r'\1continuous_flow_reversal=true,\n    ',
+              txt,
+              count=1)
+          if n!=1:
+              raise SystemExit(f'HP downstream valve flow-regularization count={n}')
+
+          # The HP pump inlet pressure-loss element shares the same reversing
+          # flow and must use the same continuous enthalpy transport equation.
+          inlet_loss_pat=re.compile(
+              r'(ThermoSysPro\.WaterSteam\.PressureLosses\.PipePressureLoss\s+'
+              r'perteChargeK3\(\s*)')
+          txt,n=inlet_loss_pat.subn(
+              r'\1continuous_flow_reversal=true,\n    ',
+              txt,
+              count=1)
+          if n!=1:
+              raise SystemExit(f'HP inlet loss flow-regularization count={n}')
+
+          # Keep the original HP valve characteristic and signal, but remove
+          # its IF97 property call from the reversing-flow NLS. The fixed
+          # density is read from the NORMAL_100 solved state, not guessed.
+          native_hp_valve=(
+              'ThermoSysPro.WaterSteam.PressureLosses.ControlValve '
+              'Vanne_alimentationMPHP1(')
+          regularized_hp_valve=(
+              'TripLensFwpHpRegularizedControlValve '
+              'Vanne_alimentationMPHP1(')
+          if txt.count(native_hp_valve)!=1:
+              raise SystemExit(f'HP valve type replacement count={txt.count(native_hp_valve)}')
+          # CombinedCycle_TripTAC has no HP-pump discharge non-return isolation.
+          # The static pump loses its positive-flow operating point before Q=0.
+          # Use a continuous, speed-coupled reverse-leak resistance so the DAE
+          # remains one structure through coastdown. Keep it inside R&D only.
+          declaration=(
+              '  model TripLensFwpHpRegularizedPipePressureLoss\n'
+              '    parameter Real K=10;\n'
+              '    parameter Modelica.SIunits.Position z1=0;\n'
+              '    parameter Modelica.SIunits.Position z2=0;\n'
+              '    parameter Modelica.SIunits.Density rhoFixed=10.426265903235906\n'
+              '      "NORMAL_100/t=301 solved-state density; regenerate when golden state changes";\n'
+              '  protected\n'
+              '    constant Modelica.SIunits.Acceleration g=Modelica.Constants.g_n;\n'
+              '    parameter Real eps=1e-3;\n'
+              '    parameter Modelica.SIunits.MassFlowRate Qeps=1e-3;\n'
+              '  public\n'
+              '    ThermoSysPro.Units.DifferentialPressure deltaPf;\n'
+              '    ThermoSysPro.Units.DifferentialPressure deltaPg;\n'
+              '    ThermoSysPro.Units.DifferentialPressure deltaP;\n'
+              '    Modelica.SIunits.MassFlowRate Q(start=100);\n'
+              '    Modelica.SIunits.Density rho(start=10.4);\n'
+              '    Modelica.SIunits.AbsolutePressure Pm(start=1e5);\n'
+              '    Modelica.SIunits.SpecificEnthalpy h(start=1e5);\n'
+              '    ThermoSysPro.WaterSteam.Connectors.FluidInlet C1;\n'
+              '    ThermoSysPro.WaterSteam.Connectors.FluidOutlet C2;\n'
+              '  equation\n'
+              '    C1.P - C2.P = deltaP;\n'
+              '    C2.Q = C1.Q;\n'
+              '    C2.h = C1.h;\n'
+              '    h = C1.h;\n'
+              '    Q = C1.Q;\n'
+              '    0 = noEvent(if Q > Qeps then C1.h - C1.h_vol else if Q < -Qeps then\n'
+              '      C2.h - C2.h_vol else C1.h - 0.5*((C1.h_vol - C2.h_vol)*\n'
+              '      Modelica.Math.sin(Modelica.Constants.pi*Q/2/Qeps) + C1.h_vol + C2.h_vol));\n'
+              '    rho = rhoFixed;\n'
+              '    deltaPf = K*ThermoSysPro.Functions.ThermoSquare(Q, eps)/rho;\n'
+              '    deltaPg = rho*g*(z2 - z1);\n'
+              '    deltaP = deltaPf + deltaPg;\n'
+              '    Pm = (C1.P + C2.P)/2;\n'
+              '  end TripLensFwpHpRegularizedPipePressureLoss;\n'
+              '  model TripLensFwpHpRegularizedNRV\n'
+              '    parameter ThermoSysPro.Units.AngularVelocity_rpm VrOpen=1399\n'
+              '      "Virtual R&D full-open speed; plant/OEM value pending";\n'
+              '    parameter ThermoSysPro.Units.AngularVelocity_rpm VrClosed=1300\n'
+              '      "Virtual R&D isolated speed; plant/OEM value pending";\n'
+              '    parameter Real Ropen(unit="Pa.s/kg")=1e-3;\n'
+              '    parameter Real Rclosed(unit="Pa.s/kg")=2e10\n'
+              '      "Virtual R&D reverse-leak resistance; plant/OEM value pending";\n'
+              '    parameter Modelica.SIunits.MassFlowRate Qeps=1e-3;\n'
+              '    Real opening(min=0, max=1);\n'
+              '    Real hydraulicResistance(unit="Pa.s/kg");\n'
+              '    Modelica.SIunits.MassFlowRate Q;\n'
+              '    Modelica.SIunits.Pressure deltaP;\n'
+              '    ThermoSysPro.InstrumentationAndControl.Connectors.InputReal speed;\n'
+              '    ThermoSysPro.WaterSteam.Connectors.FluidInlet C1;\n'
+              '    ThermoSysPro.WaterSteam.Connectors.FluidOutlet C2;\n'
+              '  equation\n'
+              '    C1.Q = C2.Q;\n'
+              '    C1.h = C2.h;\n'
+              '    Q = C1.Q;\n'
+              '    deltaP = C1.P - C2.P;\n'
+              '    0 = noEvent(if Q > Qeps then C1.h - C1.h_vol else if Q < -Qeps then\n'
+              '      C2.h - C2.h_vol else C1.h - 0.5*((C1.h_vol - C2.h_vol)*\n'
+              '      Modelica.Math.sin(Modelica.Constants.pi*Q/2/Qeps) + C1.h_vol + C2.h_vol));\n'
+              '    opening = max(0, min(1,\n'
+              '      (speed.signal - VrClosed)/(VrOpen - VrClosed)));\n'
+              '    hydraulicResistance = Ropen + (Rclosed - Ropen)*(1 - opening)^8;\n'
+              '    deltaP = hydraulicResistance*Q;\n'
+              '  end TripLensFwpHpRegularizedNRV;\n'
+              '  model TripLensFwpHpRegularizedControlValve\n'
+              '    parameter ThermoSysPro.Units.Cv Cvmax=8005.42;\n'
+              '    parameter Integer mode=0 "Compatibility with native valve modifier";\n'
+              '    parameter Boolean continuous_flow_reversal=true;\n'
+              '    parameter Modelica.SIunits.Density rhoFixed=926.1664940825133\n'
+              '      "NORMAL_100 solved-state density; regenerate when golden state changes";\n'
+              '  protected\n'
+              '    parameter Real eps=1.0;\n'
+              '    parameter Modelica.SIunits.MassFlowRate Qeps=1e-3;\n'
+              '  public\n'
+              '    ThermoSysPro.Units.Cv Cv(start=100);\n'
+              '    Modelica.SIunits.MassFlowRate Q(start=75);\n'
+              '    ThermoSysPro.Units.DifferentialPressure deltaP;\n'
+              '    Modelica.SIunits.Density rho;\n'
+              '    Modelica.SIunits.AbsolutePressure Pm(start=1e5);\n'
+              '    Modelica.SIunits.SpecificEnthalpy h(start=1e5);\n'
+              '    ThermoSysPro.InstrumentationAndControl.Connectors.InputReal Ouv;\n'
+              '    ThermoSysPro.WaterSteam.Connectors.FluidInlet C1;\n'
+              '    ThermoSysPro.WaterSteam.Connectors.FluidOutlet C2;\n'
+              '  equation\n'
+              '    C1.h = C2.h;\n'
+              '    C1.Q = C2.Q;\n'
+              '    h = C1.h;\n'
+              '    Q = C1.Q;\n'
+              '    deltaP = C1.P - C2.P;\n'
+              '    0 = noEvent(if Q > Qeps then C1.h - C1.h_vol else if Q < -Qeps then\n'
+              '      C2.h - C2.h_vol else C1.h - 0.5*((C1.h_vol - C2.h_vol)*\n'
+              '      Modelica.Math.sin(Modelica.Constants.pi*Q/2/Qeps) + C1.h_vol + C2.h_vol));\n'
+              '    deltaP*Cv*abs(Cv) = 1.733e12*\n'
+              '      ThermoSysPro.Functions.ThermoSquare(Q, eps)/rhoFixed^2;\n'
+              '    Cv = Ouv.signal*Cvmax;\n'
+              '    Pm = (C1.P + C2.P)/2;\n'
+              '    rho = rhoFixed;\n'
+              '  end TripLensFwpHpRegularizedControlValve;\n'
+              '  model TripLensFwpHpClosedIsolation\n'
+              '    parameter Modelica.SIunits.MassFlowRate Qleak=-5e-4\n'
+              '      "Bounded R&D numerical reverse leakage; plant/OEM value pending";\n'
+              '    parameter Modelica.SIunits.MassFlowRate Qeps=1e-3;\n'
+              '    Real opening;\n'
+              '    Modelica.SIunits.MassFlowRate Q;\n'
+              '    Modelica.SIunits.Pressure deltaP;\n'
+              '    ThermoSysPro.InstrumentationAndControl.Connectors.InputReal speed;\n'
+              '    ThermoSysPro.WaterSteam.Connectors.FluidInlet C1;\n'
+              '    ThermoSysPro.WaterSteam.Connectors.FluidOutlet C2;\n'
+              '  equation\n'
+              '    C1.Q = C2.Q;\n'
+              '    C1.Q = Qleak;\n'
+              '    C1.h = C2.h;\n'
+              '    Q = C1.Q;\n'
+              '    0 = noEvent(if Q > Qeps then C1.h - C1.h_vol else if Q < -Qeps then\n'
+              '      C2.h - C2.h_vol else C1.h - 0.5*((C1.h_vol - C2.h_vol)*\n'
+              '      Modelica.Math.sin(Modelica.Constants.pi*Q/2/Qeps) + C1.h_vol + C2.h_vol));\n'
+              '    deltaP = C1.P - C2.P;\n'
+              '    opening = 0;\n'
+              '  end TripLensFwpHpClosedIsolation;\n'
+              '  TripLensFwpHpRegularizedNRV tripLensFwpHpDischargeNRV\n'
+              '    "R&D-only regularized non-return isolation; not a Competition tag";\n')
+          txt,n=re.subn(r'^equation\s*$', declaration+'equation', txt, count=1, flags=re.M)
+          if n!=1: raise SystemExit(f'HP discharge NRV declaration count={n}')
+
+          old_discharge=(
+              '  connect(Vanne_alimentationMPHP1.C1, PompeAlimHP.C2)\n'
+              '    annotation (Line(points={{721,-102.8},{809,-102.8},{809,-50},{791,-50}}));')
+          new_discharge=(
+              '  connect(PompeAlimHP.C2, tripLensFwpHpDischargeNRV.C1);\n'
+              '  connect(tripLensFwpHpDischargeNRV.C2, Vanne_alimentationMPHP1.C1);\n'
+              '  connect(arretPomesHP.y, tripLensFwpHpDischargeNRV.speed);')
+          if txt.count(old_discharge)!=1:
+              raise SystemExit(f'HP discharge connection count={txt.count(old_discharge)}')
+          txt=txt.replace(old_discharge,new_discharge,1)
+
+          if 'connect(PompeAlimHP.rpm_or_mpower, arretPomesHP.y)' not in txt:
+              raise SystemExit('native HP pump speed connection missing')
+          # Warm with the native valve so the proven NORMAL_100 initialization
+          # is unchanged. The Trip runtime retains identical component names,
+          # replaces only the HP valve equation, and imports the solved state.
+          warm_txt=txt
+          runtime_txt=txt.replace(native_hp_valve,regularized_hp_valve,1)
+          native_hp_steam_pipe=(
+              'ThermoSysPro.WaterSteam.PressureLosses.PipePressureLoss '
+              'lumpedStraightPipeK2(')
+          if runtime_txt.count(native_hp_steam_pipe)!=1:
+              raise SystemExit(
+                  f'HP steam pipe regularization target count='
+                  f'{runtime_txt.count(native_hp_steam_pipe)}')
+          runtime_txt=runtime_txt.replace(
+              native_hp_steam_pipe,
+              'TripLensFwpHpRegularizedPipePressureLoss lumpedStraightPipeK2(',
+              1)
+          runtime_txt=runtime_txt.replace(
+              'model TripLens_FWP_HP_WarmSeeded\n',
+              'model TripLens_FWP_HP_TripRuntime\n',
+              1)
+          runtime_txt=runtime_txt.replace(
+              'end TripLens_FWP_HP_WarmSeeded;',
+              'end TripLens_FWP_HP_TripRuntime;',
+              1)
+          closed_txt=runtime_txt.replace(
+              'model TripLens_FWP_HP_TripRuntime\n',
+              'model TripLens_FWP_HP_ClosedRuntime\n',
+              1)
+          closed_txt=closed_txt.replace(
+              'end TripLens_FWP_HP_TripRuntime;',
+              'end TripLens_FWP_HP_ClosedRuntime;',
+              1)
+          closed_txt=closed_txt.replace(
+              'TripLensFwpHpRegularizedNRV tripLensFwpHpDischargeNRV',
+              'TripLensFwpHpClosedIsolation tripLensFwpHpDischargeNRV',
+              1)
+          Path('fwp_warm/build/TripLens_FWP_HP_WarmSeeded.mo').write_text(
+              warm_txt,encoding='utf-8')
+          Path('fwp_warm/build/TripLens_FWP_HP_TripRuntime.mo').write_text(
+              runtime_txt,encoding='utf-8')
+          Path('fwp_warm/build/TripLens_FWP_HP_ClosedRuntime.mo').write_text(
+              closed_txt,encoding='utf-8')
+          Path('fwp_warm/results/contract.json').write_text(json.dumps({
+              'base_model':'CombinedCycle_TripTAC',
+              'thermosyspro_commit':'db81ae1b5a6a85f6c6c7693244cafa6087e18ff5',
+              'normal_hold_s':300,
+              'trip_request_s':300.0,
+              'breaker_open_reference_s':300.08,
+              'pump':'PompeAlimHP',
+              'native_topology_modified':True,
+              'new_motor_component_inserted':False,
+              'native_discharge_check_valve_inserted':False,
+              'r_and_d_regularized_isolation_adapter_inserted':True,
+              'r_and_d_hp_valve_regularized':True,
+              'r_and_d_hp_steam_pipe_regularized':True,
+              'hp_steam_pipe_fixed_density_kg_m3':10.426265903235906,
+              'post_transition_fixed_closed_topology':True,
+              'checkpoint_state_output_intervals':10,
+              'state_continuous_piecewise_isolation':True,
+              'post_transition_numerical_leak_kg_s':-5e-4,
+              'hp_valve_fixed_density_kg_m3':926.1664940825133,
+              'r_and_d_discharge_isolation':'TripLensFwpHpRegularizedNRV between PompeAlimHP and Vanne_alimentationMPHP1; speed-coupled continuous resistance, no field/Competition tag',
+              'r_and_d_discharge_isolation_parameters':'VrOpen=1399 rpm, VrClosed=1300 rpm, Rclosed=2e10 Pa.s/kg; virtual R&D values pending plant/OEM data',
+              'native_numerical_regularization':'PompeAlimHP and perteChargeK3 continuous_flow_reversal=true; HP isolation valve keeps the native Cv law; lumpedStraightPipeK2 keeps the native K law with NORMAL_100/t=301 fixed densities to avoid invalid IF97 solver trial states',
+              'gt_boundary':'NORMAL_100 606.94 kg/s / 893.75 K',
+              'coastdown_source':'R&D FWP virtual motor surrogate; tau approx 1 s, not plant-approved',
+              'initialization':'native 0-300 seed -> regularized 300-301 transition -> state-continuous fixed-isolation 301-420 runtime'
+          },indent=2),encoding='utf-8')
+          print('FWP_HP_WARM_MODEL_BUILD_PASS')
+          PY
+
+      - name: Install Modelica 3.2.3
+        shell: bash
+        run: |
+          cat > fwp_warm/build/install.mos <<'MOS'
+          installPackage(Modelica, "3.2.3", exactMatch=true);
+          getErrorString();
+          MOS
+          docker run --rm \
+            -v "$PWD/fwp_warm/omhome:/root" \
+            -v "$PWD/fwp_warm:/workspace" -w /workspace \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            omc /workspace/build/install.mos | tee fwp_warm/results/install.log
+
+      - name: Create 300 s warm state
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > fwp_warm/build/warm.mos <<'MOS'
+          setCommandLineOptions("--std=3.4");
+          loadModel(Modelica,{"3.2.3"}); getErrorString();
+          loadFile("/workspace/vendor/ThermoSysPro/ThermoSysPro/package.mo"); getErrorString();
+          loadFile("/workspace/build/TripLens_FWP_HP_WarmSeeded.mo"); getErrorString();
+          cd("/workspace/results");
+          checkModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_HP_WarmSeeded); getErrorString();
+          simulate(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_HP_WarmSeeded,
+            startTime=0, stopTime=300, numberOfIntervals=1, tolerance=1e-3,
+            method="dassl", outputFormat="mat", fileNamePrefix="fwp_hp_warm",
+            variableFilter=".*",
+            simflags="-iim=symbolic -noEventEmit -emit_protected");
+          getErrorString();
+          MOS
+          docker run --rm \
+            -v "$PWD/fwp_warm/omhome:/root" \
+            -v "$PWD/fwp_warm:/workspace" -w /workspace \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            omc /workspace/build/warm.mos | tee fwp_warm/results/warm.log
+          test -s fwp_warm/results/fwp_hp_warm_res.mat
+          grep -q "The simulation finished successfully" fwp_warm/results/warm.log
+
+      - name: Build transition and fixed-closed executables
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > fwp_warm/build/build_trip_restart.mos <<'MOS'
+          setCommandLineOptions("--std=3.4");
+          loadModel(Modelica,{"3.2.3"}); getErrorString();
+          loadFile("/workspace/vendor/ThermoSysPro/ThermoSysPro/package.mo"); getErrorString();
+          loadFile("/workspace/build/TripLens_FWP_HP_TripRuntime.mo"); getErrorString();
+          cd("/workspace/results");
+          buildModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_HP_TripRuntime,
+            startTime=300, stopTime=301, numberOfIntervals=10, tolerance=1e-3,
+            method="dassl", outputFormat="mat", fileNamePrefix="fwp_hp_transition_state",
+            variableFilter=".*");
+          getErrorString();
+          buildModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_HP_TripRuntime,
+            startTime=300, stopTime=301, numberOfIntervals=10, tolerance=1e-3,
+            method="dassl", outputFormat="csv", fileNamePrefix="fwp_hp_transition_raw",
+            variableFilter="^(time|arretPomesHP\\.y\\.signal|PompeAlimHP\\.Q|CapteurDebitEauHP\\.Measure\\.signal|Ballon(HP|MP|BP)\\.(P|zl)|tripLensFwpHpDischargeNRV\\.(opening|Q))$");
+          getErrorString();
+          loadFile("/workspace/build/TripLens_FWP_HP_ClosedRuntime.mo"); getErrorString();
+          buildModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_HP_ClosedRuntime,
+            startTime=301, stopTime=420, numberOfIntervals=1190, tolerance=1e-3,
+            method="cvode", outputFormat="csv", fileNamePrefix="fwp_hp_closed_hold",
+            variableFilter="^(time|arretPomesHP\\.y\\.signal|PompeAlimHP\\.Q|CapteurDebitEauHP\\.Measure\\.signal|Ballon(HP|MP|BP)\\.(P|zl)|tripLensFwpHpDischargeNRV\\.(opening|Q))$");
+          getErrorString();
+          MOS
+          docker run --rm \
+            -v "$PWD/fwp_warm/omhome:/root" \
+            -v "$PWD/fwp_warm:/workspace" -w /workspace \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            omc /workspace/build/build_trip_restart.mos | tee fwp_warm/results/build_trip_restart.log
+          test -x fwp_warm/results/fwp_hp_transition_state
+          test -x fwp_warm/results/fwp_hp_transition_raw
+          test -x fwp_warm/results/fwp_hp_closed_hold
+
+      - name: Cross 300-to-301 second HP trip transition
+        shell: bash
+        run: |
+          set -euo pipefail
+          for target in state raw; do
+            timeout 12m docker run --rm \
+              -v "$PWD/fwp_warm/results:/work" \
+              -w /work \
+              openmodelica/openmodelica:v1.27.0-minimal \
+              "./fwp_hp_transition_${target}" \
+                -iif=/work/fwp_hp_warm_res.mat \
+                -iit=300 \
+                -iim=none \
+                -s=dassl \
+                -noEventEmit \
+                -emit_protected \
+                -initialStepSize=1e-5 \
+                -maxStepSize=0.001 \
+                -r="/work/fwp_hp_transition_${target}_res.$([[ "$target" == state ]] && printf mat || printf csv)" \
+                -lv=LOG_INIT,LOG_STATS \
+              | tee "fwp_warm/results/trip_transition_${target}.log"
+            grep -q "The simulation finished successfully" \
+              "fwp_warm/results/trip_transition_${target}.log"
+          done
+          mv fwp_warm/results/fwp_hp_transition_raw_res.csv \
+             fwp_warm/results/fwp_hp_transition_raw.csv
+          test -s fwp_warm/results/fwp_hp_transition_state_res.mat
+          test -s fwp_warm/results/fwp_hp_transition_raw.csv
+
+      - name: Run 301-to-420 second fixed-closed physical response
+        shell: bash
+        run: |
+          set -euo pipefail
+          chosen=""
+          for attempt in none_dassl; do
+            init_method="${attempt%%_*}"
+            solver="${attempt#*_}"
+            set +e
+            timeout --signal=TERM --kill-after=15s 75m docker run --rm \
+              --name "fwp-hp-closed-${attempt}" \
+              -v "$PWD/fwp_warm/results:/work" \
+              -w /work \
+              openmodelica/openmodelica:v1.27.0-minimal \
+              ./fwp_hp_closed_hold \
+                -iif=/work/fwp_hp_transition_state_res.mat \
+                -iit=301 \
+                -iim="$init_method" \
+                -s="$solver" \
+                -noEventEmit \
+                -initialStepSize=1e-4 \
+                -maxStepSize=0.1 \
+                -r="/work/fwp_hp_closed_hold_${attempt}.csv" \
+                -lv=LOG_INIT,LOG_STATS \
+              | tee "fwp_warm/results/trip_closed_hold_${attempt}.log"
+            rc=${PIPESTATUS[0]}
+            docker rm -f "fwp-hp-closed-${attempt}" >/dev/null 2>&1 || true
+            set -e
+            if [[ "$rc" -eq 0 ]] && grep -q "The simulation finished successfully" \
+                "fwp_warm/results/trip_closed_hold_${attempt}.log"; then
+              chosen="$attempt"
+              break
+            fi
+            if [[ -s "fwp_warm/results/fwp_hp_closed_hold_${attempt}.csv" ]]; then
+              tail -n 6 "fwp_warm/results/fwp_hp_closed_hold_${attempt}.csv"
+            fi
+          done
+          test -n "$chosen"
+          printf 'dassl-transition+fixed-closed-%s\n' "$chosen" \
+            > fwp_warm/results/selected_solver.txt
+
+          python3 plant_v2/scripts/normalize_fwp_hp_raw.py \
+            --transition fwp_warm/results/fwp_hp_transition_raw.csv \
+            --post "fwp_warm/results/fwp_hp_closed_hold_${chosen}.csv" \
+            --contract fwp_warm/results/contract.json \
+            --output fwp_warm/results/fwp_hp_trip_raw.csv \
+            --provenance fwp_warm/results/fwp_hp_raw_provenance.json
+          test -s fwp_warm/results/fwp_hp_trip_raw.csv
+
+      - name: Validate warm-started physical response
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 plant_v2/scripts/validate_fwp_hp_raw.py \
+            --raw fwp_warm/results/fwp_hp_trip_raw.csv \
+            --contract fwp_warm/results/contract.json \
+            --provenance fwp_warm/results/fwp_hp_raw_provenance.json \
+            --report fwp_warm/results/fwp_hp_warmstart_report.json
+
+      - name: Normalize generated evidence permissions
+        if: always()
+        shell: bash
+        run: |
+          docker run --rm \
+            -v "$PWD/fwp_warm:/workspace" \
+            alpine:3.22 \
+            sh -c 'chmod -R a+rX /workspace'
+
+      - name: Upload evidence
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fwp-hp-warmstart-native-${{ github.run_number }}
+          path: |
+            fwp_warm/results/contract.json
+            fwp_warm/results/install.log
+            fwp_warm/results/warm.log
+            fwp_warm/results/build_trip_restart.log
+            fwp_warm/results/trip_transition_*.log
+            fwp_warm/results/trip_closed_hold_*.log
+            fwp_warm/results/selected_solver.txt
+            fwp_warm/results/fwp_hp_warm_res.mat
+            fwp_warm/results/fwp_hp_transition_state_res.mat
+            fwp_warm/results/fwp_hp_transition_raw.csv
+            fwp_warm/results/fwp_hp_closed_hold_*.csv
+            fwp_warm/results/fwp_hp_closed_hold_info.json
+            fwp_warm/results/fwp_hp_closed_hold*.c
+            fwp_warm/results/fwp_hp_trip_raw.csv
+            fwp_warm/results/fwp_hp_raw_provenance.json
+            fwp_warm/results/fwp_hp_warmstart_report.json
+            fwp_warm/build/TripLens_FWP_HP_WarmSeeded.mo
+            fwp_warm/build/TripLens_FWP_HP_TripRuntime.mo
+            fwp_warm/build/TripLens_FWP_HP_ClosedRuntime.mo
+          if-no-files-found: warn
+          retention-days: 30
