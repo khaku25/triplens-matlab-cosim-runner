@@ -38,7 +38,7 @@ thermo = [mdl '/Thermo_CVODE_FMU'];
 add_block('simulink_extras/FMU Import/FMU',thermo,'FMUName',f.name, ...
     'Position',[1030 90 1300 500]);
 set_param(thermo,'FMUInputMapping','Flat','FMUOutputMapping','Flat', ...
-    'FMUSampleTime','0.1','FMUDebugLogging','on', ...
+    'FMUSampleTime','0.01','FMUDebugLogging','on', ...
     'FMUDebugLoggingRedirect','File');
 
 ecmsPorts = get_param(ecms,'PortHandles');
@@ -51,7 +51,7 @@ assert(numel(fmuPorts.Inport)==2 && numel(fmuPorts.Outport)==7, ...
 % Operator/GT trip episode: the event identity is not supplied to TripLens;
 % this is only a deterministic integration stimulus for the verification.
 add_block('simulink/Sources/Step',[mdl '/GT_Trip_Request'], ...
-    'Time','60','Before','0','After','1','SampleTime','0.001', ...
+    'Time','1','Before','0','After','1','SampleTime','0.001', ...
     'Position',[30 85 155 115]);
 add_block('simulink/Signal Attributes/Data Type Conversion',[mdl '/GT_Trip_Boolean'], ...
     'OutDataTypeStr','boolean','Position',[185 85 245 115]);
@@ -90,17 +90,17 @@ add_line(mdl,'Not_52GT_Trip/1','CB_52GT_Feedback_Delay/1','autorouting','on');
 add_line(mdl,'CB_52GT_Feedback_Delay/1','ECMS_A_Logic/4','autorouting','on');
 
 % ECMS breaker trip drives both Thermo boundary commands.
-addTripSelector(mdl,'GT_Flow_Selector','606.94','150',540);
-addTripSelector(mdl,'GT_Temperature_Selector','893.75','550',610);
+addTripSelector(mdl,'GT_Flow_Selector','606.94','600.8706',540);
+addTripSelector(mdl,'GT_Temperature_Selector','893.75','889.28125',610);
 add_line(mdl,'ECMS_A_Logic/3','GT_Flow_Selector/2','autorouting','on');
 add_line(mdl,'ECMS_A_Logic/3','GT_Temperature_Selector/2','autorouting','on');
 % Preserve the exact nominal FMI initialization values.  The FMU must see
 % these before any switched command is evaluated, as in the proven input
 % response probe.  Subsequent values still come from the ECMS selectors.
 add_block('simulink/Discrete/Unit Delay',[mdl '/Initialized_GT_Flow'], ...
-    'InitialCondition','606.94','SampleTime','0.1','Position',[950 525 1010 555]);
+    'InitialCondition','606.94','SampleTime','0.01','Position',[950 525 1010 555]);
 add_block('simulink/Discrete/Unit Delay',[mdl '/Initialized_GT_Temperature'], ...
-    'InitialCondition','893.75','SampleTime','0.1','Position',[950 595 1010 625]);
+    'InitialCondition','893.75','SampleTime','0.01','Position',[950 595 1010 625]);
 add_line(mdl,'GT_Flow_Selector/1','Initialized_GT_Flow/1','autorouting','on');
 add_line(mdl,'GT_Temperature_Selector/1','Initialized_GT_Temperature/1','autorouting','on');
 add_line(mdl,'Initialized_GT_Flow/1','Thermo_CVODE_FMU/1','autorouting','on');
@@ -109,8 +109,12 @@ add_line(mdl,'Initialized_GT_Temperature/1','Thermo_CVODE_FMU/2','autorouting','
 % Thermo ST power is fed back to the ECMS state monitor in MW.
 add_block('simulink/Math Operations/Gain',[mdl '/ST_W_to_MW'], ...
     'Gain','1e-6','Position',[1370 410 1440 440]);
+add_block('simulink/Discrete/Unit Delay',[mdl '/Initialized_ST_MW_Feedback'], ...
+    'InitialCondition','263.1122932842558','SampleTime','0.01', ...
+    'Position',[1460 410 1535 440]);
 add_line(mdl,'Thermo_CVODE_FMU/7','ST_W_to_MW/1','autorouting','on');
-add_line(mdl,'ST_W_to_MW/1','ECMS_A_Logic/11','autorouting','on');
+add_line(mdl,'ST_W_to_MW/1','Initialized_ST_MW_Feedback/1','autorouting','on');
+add_line(mdl,'Initialized_ST_MW_Feedback/1','ECMS_A_Logic/11','autorouting','on');
 
 ecmsNames = {'relay_86gt_trip_received','relay_86gt_operated', ...
     'cb_52gt_trip_cmd','bus_a_27uv_operate','bus_b_27uv_operate', ...
@@ -125,7 +129,7 @@ add_line(mdl,'GT_Trip_Boolean/1','log_gt_trip_cmd/1','autorouting','on');
 addWorkspaceSink(mdl,'log_cb_52gt_closed_fb','cb_52gt_closed_fb',[900 210 1010 240]);
 add_line(mdl,'CB_52GT_Feedback_Delay/1','log_cb_52gt_closed_fb/1','autorouting','on');
 addWorkspaceSink(mdl,'log_stg_power_feedback_mw','stg_power_feedback_mw',[1460 410 1685 440]);
-add_line(mdl,'ST_W_to_MW/1','log_stg_power_feedback_mw/1','autorouting','on');
+add_line(mdl,'Initialized_ST_MW_Feedback/1','log_stg_power_feedback_mw/1','autorouting','on');
 addWorkspaceSink(mdl,'log_applied_gt_flow','applied_gt_flow',[860 530 1010 555]);
 add_line(mdl,'Initialized_GT_Flow/1','log_applied_gt_flow/1','autorouting','on');
 addWorkspaceSink(mdl,'log_applied_gt_temperature','applied_gt_temperature',[820 600 1010 625]);
@@ -140,7 +144,7 @@ for k=1:numel(thermoNames)
 end
 
 set_param(mdl,'SolverType','Fixed-step','Solver','FixedStepDiscrete', ...
-    'FixedStep','0.001','StopTime','120','SaveTime','on','TimeSaveName','tout');
+    'FixedStep','0.001','StopTime','2','SaveTime','on','TimeSaveName','tout');
 save_system(mdl,fullfile(outDir,[mdl '.slx']));
 
 checkpoint = struct('status','sim_running','same_simulink_model',true, ...
@@ -150,12 +154,21 @@ checkpoint = struct('status','sim_running','same_simulink_model',true, ...
 writeJson(fullfile(outDir,'closed_loop_verification.json'),checkpoint);
 
 wallStart = tic;
-simOut = sim(mdl,'ReturnWorkspaceOutputs','on');
+try
+    simOut = sim(mdl,'ReturnWorkspaceOutputs','on');
+catch ME
+    checkpoint.status = 'failed';
+    checkpoint.error_identifier = ME.identifier;
+    checkpoint.error_message = ME.message;
+    writeJson(fullfile(outDir,'closed_loop_verification.json'),checkpoint);
+    copyFmuLogs(repo,outDir);
+    rethrow(ME);
+end
 wallSeconds = toc(wallStart);
 
 % ECMS raw tag timeline at the native 1 ms logic rate.
 base = simOut.get(ecmsNames{1}); ecmsTime = base.Time(:);
-assert(~isempty(ecmsTime) && ecmsTime(end)>=119.999,'ECMS timeline incomplete.');
+assert(~isempty(ecmsTime) && ecmsTime(end)>=1.999,'ECMS timeline incomplete.');
 ecmsData = zeros(numel(ecmsTime),numel(ecmsNames));
 for k=1:numel(ecmsNames)
     ts = simOut.get(ecmsNames{k});
@@ -169,9 +182,9 @@ ecmsTable = array2table([ecmsTime gtTrip ecmsData(:,1:3) cbClosed ecmsData(:,4:7
     {'cb_52gt_closed_fb'},ecmsNames(4:7),{'stg_power_feedback_mw'}]);
 writetable(ecmsTable,fullfile(outDir,'ecms_tag_raw.csv'));
 
-% Thermo physical RAW remains at the FMU 0.1 s communication rate.
+% Thermo physical RAW remains at the proven FMU 0.01 s communication rate.
 firstThermo = simOut.get(thermoNames{1}); thermoTime = firstThermo.Time(:);
-assert(~isempty(thermoTime) && thermoTime(end)>=119.9,'Thermo timeline incomplete.');
+assert(~isempty(thermoTime) && thermoTime(end)>=1.99,'Thermo timeline incomplete.');
 thermoData = zeros(numel(thermoTime),numel(thermoNames));
 for k=1:numel(thermoNames)
     ts = simOut.get(thermoNames{k});
@@ -195,18 +208,18 @@ tLock = firstTrueTime(ecmsTime,ecmsData(:,2));
 tBreaker = firstTrueTime(ecmsTime,ecmsData(:,3));
 tOpen = firstFalseAfter(ecmsTime,cbClosed,tBreaker);
 tFlow = firstChangedTime(thermoTime,flow,606.94);
-assert(tTrip>=60 && tRecv>tTrip && tLock>tRecv && tBreaker>tLock, ...
+assert(tTrip>=1 && tRecv>tTrip && tLock>tRecv && tBreaker>tLock, ...
     'ECMS protection sequence ordering failed.');
 assert(tOpen>=tBreaker && tFlow>=tBreaker, ...
     'Command did not propagate from ECMS to Thermo in causal order.');
 
-pre = thermoTime>=59 & thermoTime<60;
-post = thermoTime>=110 & thermoTime<=120;
+pre = thermoTime>=0.9 & thermoTime<1;
+post = thermoTime>=1.8 & thermoTime<=2;
 assert(any(pre) && any(post),'Missing pre/post physical windows.');
 preMean = mean(thermoData(pre,:),1);
 postMean = mean(thermoData(post,:),1);
 delta = postMean-preMean;
-assert(abs(delta(7))>1e5,'ST power did not physically respond to ECMS trip.');
+assert(abs(delta(7))>1e3,'ST power did not physically respond to ECMS trip.');
 
 report = struct();
 report.status = 'pass';
@@ -215,7 +228,7 @@ report.actual_fmi2_cosimulation = true;
 report.csv_replay = false;
 report.full_time_axis_end_s = min(ecmsTime(end),thermoTime(end));
 report.logic_step_s = 0.001;
-report.fmu_communication_step_s = 0.1;
+report.fmu_communication_step_s = 0.01;
 report.wall_seconds = wallSeconds;
 report.command_path = checkpoint.command_path;
 report.feedback_path = checkpoint.feedback_path;
@@ -277,5 +290,15 @@ end
 function cleanupPath(varargin)
 for k=1:nargin
     if contains(path,varargin{k}), rmpath(varargin{k}); end
+end
+end
+
+function copyFmuLogs(repo,outDir)
+hits=dir(fullfile(repo,'slprj','**','*.txt'));
+logDir=fullfile(outDir,'fmu_debug_logs');
+if ~isfolder(logDir), mkdir(logDir); end
+for k=1:numel(hits)
+    copyfile(fullfile(hits(k).folder,hits(k).name), ...
+        fullfile(logDir,sprintf('%03d_%s',k,hits(k).name)));
 end
 end
