@@ -305,21 +305,45 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker run --rm \
-            -v "$PWD/fwp_warm/results:/work" \
-            -w /work \
-            openmodelica/openmodelica:v1.27.0-minimal \
-            ./fwp_hp_trip_restart \
-              -iif=/work/fwp_hp_warm_res.mat \
-              -iit=300 \
-              -iim=none \
-              -noEventEmit \
-              -initialStepSize=1e-4 \
-              -maxStepSize=0.01 \
-              -r=/work/fwp_hp_trip_raw.csv \
-              -lv=LOG_INIT,LOG_STATS | tee fwp_warm/results/trip_restart.log
+          chosen=""
+          for solver in ida dassl; do
+            set +e
+            timeout 20m docker run --rm \
+              -v "$PWD/fwp_warm/results:/work" \
+              -w /work \
+              openmodelica/openmodelica:v1.27.0-minimal \
+              ./fwp_hp_trip_restart \
+                -iif=/work/fwp_hp_warm_res.mat \
+                -iit=300 \
+                -iim=none \
+                -s="$solver" \
+                -noEventEmit \
+                -initialStepSize=1e-4 \
+                -maxStepSize=0.01 \
+                -r="/work/fwp_hp_trip_raw_${solver}.csv" \
+                -lv=LOG_INIT,LOG_STATS,LOG_NLS \
+              | tee "fwp_warm/results/trip_restart_${solver}.log"
+            rc=${PIPESTATUS[0]}
+            set -e
+            if [[ "$rc" -eq 0 ]] && grep -q "The simulation finished successfully" \
+                "fwp_warm/results/trip_restart_${solver}.log"; then
+              mv "fwp_warm/results/fwp_hp_trip_raw_${solver}.csv" \
+                 fwp_warm/results/fwp_hp_trip_raw.csv
+            fwp_warm/results/fwp_hp_trip_raw_*.csv
+              cp "fwp_warm/results/trip_restart_${solver}.log" \
+                 fwp_warm/results/trip_restart.log
+            fwp_warm/results/trip_restart_*.log
+            fwp_warm/results/selected_solver.txt
+              chosen="$solver"
+              break
+            fi
+            if [[ -s "fwp_warm/results/fwp_hp_trip_raw_${solver}.csv" ]]; then
+              tail -n 6 "fwp_warm/results/fwp_hp_trip_raw_${solver}.csv"
+            fi
+          done
+          test -n "$chosen"
+          printf '%s\n' "$chosen" > fwp_warm/results/selected_solver.txt
           test -s fwp_warm/results/fwp_hp_trip_raw.csv
-          grep -q "The simulation finished successfully" fwp_warm/results/trip_restart.log
 
       - name: Validate warm-started physical response
         shell: bash
@@ -330,6 +354,7 @@ jobs:
           import csv,json,math
 
           p=Path('fwp_warm/results/fwp_hp_trip_raw.csv')
+          selected_solver=Path('fwp_warm/results/selected_solver.txt').read_text(encoding='utf-8').strip()
           with p.open(newline='',encoding='utf-8-sig') as f:
               r=csv.reader(f)
               raw_h=next(r)
@@ -429,7 +454,8 @@ jobs:
               'status':'pass',
               'simulation_success':True,
               'warm_state_used':True,
-              'restart_method':'emit-protected snapshot + R&D regularized HP discharge isolation + dedicated CVODE executable + iif/iit/iim=none',
+              'restart_method':f'emit-protected snapshot + R&D regularized HP discharge isolation + {selected_solver} + iif/iit/iim=none',
+              'selected_solver':selected_solver,
               'raw_start_s':t[0],
               'raw_end_s':t[-1],
               'raw_rows':len(rows),
