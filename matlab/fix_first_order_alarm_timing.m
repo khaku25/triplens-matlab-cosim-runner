@@ -55,6 +55,10 @@ set_param(sub,'Description',['Layer1 model-backed drum H/HH/L/LL. Delay uses sim
 save_system(modelName,modelPath);
 
 outDir=fullfile(repoRoot,'outputs'); if ~isfolder(outDir), mkdir(outDir); end
+% Refresh the proof artifact after the timing correction so the uploaded SLX
+% is exactly the clock-timed model, not the pre-correction copy.
+copyfile(modelPath,fullfile(outDir,[modelName '_closed_loop.slx']),'f');
+
 report=struct();
 report.model=modelName;
 report.layer1_timing='SIMULATION_CLOCK_DURATION';
