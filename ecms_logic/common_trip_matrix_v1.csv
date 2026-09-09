@@ -1,0 +1,9 @@
+cause_id,source_signal,source_layer,gt_trip_request,st_trip_request,notes
+DIRECT_GT_TRIP,gt_trip_cmd,COMMAND,1,1,GT Trip always intertrips ST
+DIRECT_ST_TRIP,st_trip_cmd,COMMAND,0,1,Direct ST Trip affects ST only
+HP_DRUM_HH,hp_drum_level_hh,LAYER1_ALARM,0,1,HP Drum HH trips ST only
+IP_DRUM_HH,ip_drum_level_hh,LAYER1_ALARM,0,1,IP Drum HH trips ST only
+LP_DRUM_HH,lp_drum_level_hh,LAYER1_ALARM,0,1,LP Drum HH trips ST only
+HP_DRUM_LL,hp_drum_level_ll,LAYER1_ALARM,1,1,HP Drum LL trips GT and ST simultaneously
+IP_DRUM_LL,ip_drum_level_ll,LAYER1_ALARM,1,1,IP Drum LL trips GT and ST simultaneously
+LP_DRUM_LL,lp_drum_level_ll,LAYER1_ALARM,1,1,LP Drum LL trips GT and ST simultaneously
