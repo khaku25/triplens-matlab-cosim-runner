@@ -1,0 +1,81 @@
+name: GT Trip CVODE 130s Revalidation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/gt-trip-cvode-130s-revalidation.yml'
+      - 'ci/trip130/probe_gt_trip_130s.py'
+      - 'ci/cvode/**'
+      - 'ci/cvode_allocator_fix.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: gt-trip-cvode-130s-revalidation
+  cancel-in-progress: true
+
+jobs:
+  gt-trip-cvode-130s:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      TRIPLENS_USE_NATIVE_SEED: '1'
+      TRIPLENS_RETAIN_VALIDATED_NLS_GUESS: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download exact proven native-seeded source FMU
+        uses: actions/download-artifact@v4
+        with:
+          name: native-seeded-source-1
+          run-id: 34226155354
+          github-token: ${{ github.token }}
+          path: seed_source
+
+      - name: Install independent FMI probe dependencies
+        run: python3 -m pip install 'fmpy==0.3.22' 'numpy<3' 'h5py<4'
+
+      - name: Build exact native-seeded Linux CVODE FMU
+        shell: bash
+        run: |
+          set -euo pipefail
+          SEED="$(find seed_source -name 'TripLens_CombinedCycle_TripTAC_CoSim.fmu' -print -quit)"
+          test -n "$SEED"
+          mkdir -p cvode_build gt_trip_130s
+          python3 ci/cvode/build_cvode_fmu.py \
+            --seed-fmu "$SEED" \
+            --work cvode_work \
+            --out cvode_build \
+            --platform linux64 \
+            2>&1 | tee gt_trip_130s/cvode_build.log
+
+      - name: Run actual 10s nominal plus 120s GT Trip physics
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 ci/trip130/probe_gt_trip_130s.py \
+            --fmu cvode_build/TripLens_CombinedCycle_TripTAC_CoSim_linux64.fmu \
+            --out gt_trip_130s \
+            --trip-at 10 \
+            --stop 130 \
+            --step 0.1 \
+            2>&1 | tee gt_trip_130s/execution.log
+          grep -q 'GT_TRIP_ALL_DYNAMIC_130S_PASS' gt_trip_130s/execution.log
+
+      - name: Upload GT Trip 130s evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gt-trip-cvode-130s-revalidation-${{ github.run_number }}
+          path: |
+            gt_trip_130s/
+            cvode_build/cvode_build_manifest.json
+            cvode_build/allocator_fix.json
+          if-no-files-found: warn
+          retention-days: 30
