@@ -80,14 +80,43 @@ jobs:
           canonical="plant_v2/build/fmu/TripLens_Plant_V2_CoSim.fmu"
           if [[ ! -s "$canonical" ]]; then
             actual="$(find plant_v2/build/fmu -maxdepth 5 -type f -name '*.fmu' -print -quit)"
-            if [[ -z "$actual" || ! -s "$actual" ]]; then
-              echo 'translateModelFMU returned without a usable .fmu artifact' >&2
-              echo '--- FMU temp tree ---' >&2
-              find plant_v2/build/fmu -maxdepth 3 -printf '%M %P\n' | sort | tail -200 >&2 || true
-              exit 1
+            if [[ -n "$actual" && -s "$actual" ]]; then
+              cp "$actual" "$canonical"
+              echo "Canonicalized FMU path: $actual -> $canonical"
+            else
+              # Source-code FMU export in the pinned OpenModelica image can
+              # leave a complete *.fmutmp tree without creating the final ZIP.
+              # Package that generated tree deterministically; do not rebuild
+              # or alter its modelDescription, resources, or generated sources.
+              temp_root="$(find plant_v2/build/fmu -maxdepth 3 -type f -name modelDescription.xml -printf '%h\n' -quit)"
+              if [[ -z "$temp_root" || ! -s "$temp_root/modelDescription.xml" ]]; then
+                echo 'translateModelFMU returned neither an FMU nor a complete source-FMU tree' >&2
+                find plant_v2/build/fmu -maxdepth 3 -printf '%M %P\n' | sort | tail -200 >&2 || true
+                exit 1
+              fi
+              python3 - "$temp_root" "$canonical" <<'PY'
+          from pathlib import Path
+          import sys
+          import zipfile
+
+          source = Path(sys.argv[1])
+          target = Path(sys.argv[2])
+          files = sorted(path for path in source.rglob("*") if path.is_file())
+          if not files or not (source / "modelDescription.xml").is_file():
+              raise SystemExit("incomplete OpenModelica source-FMU tree")
+          with zipfile.ZipFile(
+              target, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9
+          ) as archive:
+              for path in files:
+                  archive.write(path, path.relative_to(source).as_posix())
+          print(
+              "PACKAGED_SOURCE_FMU",
+              f"source={source}",
+              f"files={len(files)}",
+              f"target={target}",
+          )
+          PY
             fi
-            cp "$actual" "$canonical"
-            echo "Canonicalized FMU path: $actual -> $canonical"
           fi
           test -s "$canonical"
 
