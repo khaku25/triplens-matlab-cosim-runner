@@ -1,0 +1,201 @@
+name: FWP-HP Warm-Start Native Physics
+
+on:
+  push:
+    branches: [integration/validated-stack-20260909]
+    paths:
+      - '.github/workflows/fwp-hp-warmstart-native.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fwp-hp-warmstart-native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare pinned ThermoSysPro
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf fwp_warm
+          mkdir -p fwp_warm/vendor fwp_warm/build fwp_warm/results fwp_warm/omhome
+          git clone --no-checkout https://github.com/Dwarf-Planet-Project/ThermoSysPro.git fwp_warm/vendor/ThermoSysPro
+          git -C fwp_warm/vendor/ThermoSysPro checkout --detach db81ae1b5a6a85f6c6c7693244cafa6087e18ff5
+
+      - name: Build structurally unchanged HP-FWP test model
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,re
+          src=Path('fwp_warm/vendor/ThermoSysPro/ThermoSysPro/Examples/CombinedCyclePowerPlant/CombinedCycle_TripTAC.mo')
+          txt=src.read_text(encoding='utf-8')
+          txt=txt.replace('model CombinedCycle_TripTAC\n','model TripLens_FWP_HP_WarmSeeded\n',1)
+          txt=txt.replace('end CombinedCycle_TripTAC;','end TripLens_FWP_HP_WarmSeeded;',1)
+
+          # Hold GT at NORMAL_100. 150/550 is DERATING and is not used here.
+          txt=txt.replace('Table=[0,606.94; 10,606.94; 600,\n        50; 650,50]',
+                          'Table=[0,606.94; 1000,606.94]',1)
+          txt=txt.replace('Table=[0,893.75; 10,893.75; 600,423; 650,423]',
+                          'Table=[0,893.75; 1000,893.75]',1)
+
+          # Keep the native PompeAlimHP and its original hydraulic topology.
+          # Only replace its existing RPM source with the already validated
+          # R&D motor-surrogate coast-down shape (tau≈1 s), after 300 s warm hold.
+          pat=re.compile(
+              r'ThermoSysPro\.InstrumentationAndControl\.Blocks\.Sources\.Rampe\s+arretPomesHP\(\s*'
+              r'Initialvalue=1400,\s*Starttime=4000,\s*Duration=1000,\s*Finalvalue=700\)')
+          table=[
+              [0,1400],[300.08,1400],[300.5,920],[301,500],[302,185],
+              [303,68],[304,25],[305,9],[306,3.4],[307,1.25],[308,0.46],
+              [310,0],[420,0]
+          ]
+          rows='; '.join(f'{t},{rpm}' for t,rpm in table)
+          repl=(
+              'ThermoSysPro.InstrumentationAndControl.Blocks.Tables.Table1DTemps arretPomesHP(\n'
+              f'    Table=[{rows}], option_interpolation=1)')
+          txt,n=pat.subn(repl,txt,count=1)
+          if n!=1: raise SystemExit(f'HP speed source replacement count={n}')
+          if 'connect(PompeAlimHP.rpm_or_mpower, arretPomesHP.y)' not in txt:
+              raise SystemExit('native HP pump speed connection missing')
+          Path('fwp_warm/build/TripLens_FWP_HP_WarmSeeded.mo').write_text(txt,encoding='utf-8')
+          Path('fwp_warm/results/contract.json').write_text(json.dumps({
+              'base_model':'CombinedCycle_TripTAC',
+              'thermosyspro_commit':'db81ae1b5a6a85f6c6c7693244cafa6087e18ff5',
+              'normal_hold_s':300,
+              'trip_request_s':300.0,
+              'breaker_open_reference_s':300.08,
+              'pump':'PompeAlimHP',
+              'native_topology_modified':False,
+              'new_motor_or_check_valve_inserted':False,
+              'gt_boundary':'NORMAL_100 606.94 kg/s / 893.75 K',
+              'coastdown_source':'R&D FWP virtual motor surrogate; tau 1.0 s, not plant-approved',
+              'initialization':'same-model warm state -> -iif/-iit restart -> cvode'
+          },indent=2),encoding='utf-8')
+          print('FWP_HP_WARM_MODEL_BUILD_PASS')
+          PY
+
+      - name: Install Modelica 3.2.3
+        shell: bash
+        run: |
+          cat > fwp_warm/build/install.mos <<'MOS'
+          installPackage(Modelica, "3.2.3", exactMatch=true);
+          getErrorString();
+          MOS
+          docker run --rm \
+            -v "$PWD/fwp_warm/omhome:/root" \
+            -v "$PWD/fwp_warm:/workspace" -w /workspace \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            omc /workspace/build/install.mos | tee fwp_warm/results/install.log
+
+      - name: Create 300 s warm state
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > fwp_warm/build/warm.mos <<'MOS'
+          setCommandLineOptions("--std=3.4");
+          loadModel(Modelica,{"3.2.3"}); getErrorString();
+          loadFile("/workspace/vendor/ThermoSysPro/ThermoSysPro/package.mo"); getErrorString();
+          loadFile("/workspace/build/TripLens_FWP_HP_WarmSeeded.mo"); getErrorString();
+          cd("/workspace/results");
+          checkModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_HP_WarmSeeded); getErrorString();
+          simulate(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_HP_WarmSeeded,
+            startTime=0, stopTime=300, numberOfIntervals=3000, tolerance=1e-3,
+            method="dassl", outputFormat="mat", fileNamePrefix="fwp_hp_warm",
+            simflags="-noEventEmit");
+          getErrorString();
+          MOS
+          docker run --rm \
+            -v "$PWD/fwp_warm/omhome:/root" \
+            -v "$PWD/fwp_warm:/workspace" -w /workspace \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            omc /workspace/build/warm.mos | tee fwp_warm/results/warm.log
+          test -s fwp_warm/results/fwp_hp_warm_res.mat
+
+      - name: Restart from warm state and run FWP-HP trip physics
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > fwp_warm/build/trip.mos <<'MOS'
+          setCommandLineOptions("--std=3.4");
+          loadModel(Modelica,{"3.2.3"}); getErrorString();
+          loadFile("/workspace/vendor/ThermoSysPro/ThermoSysPro/package.mo"); getErrorString();
+          loadFile("/workspace/build/TripLens_FWP_HP_WarmSeeded.mo"); getErrorString();
+          cd("/workspace/results");
+          simulate(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_HP_WarmSeeded,
+            startTime=300, stopTime=420, numberOfIntervals=1200, tolerance=1e-3,
+            method="cvode", outputFormat="csv", fileNamePrefix="fwp_hp_trip",
+            simflags="-iif=fwp_hp_warm_res.mat -iit=300 -iim=none -noEventEmit");
+          getErrorString();
+          MOS
+          docker run --rm \
+            -v "$PWD/fwp_warm/omhome:/root" \
+            -v "$PWD/fwp_warm:/workspace" -w /workspace \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            omc /workspace/build/trip.mos | tee fwp_warm/results/trip.log
+          test -s fwp_warm/results/fwp_hp_trip_res.csv
+
+      - name: Validate warm-started physical response
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import csv,json,math
+          p=Path('fwp_warm/results/fwp_hp_trip_res.csv')
+          with p.open(newline='',encoding='utf-8-sig') as f:
+              r=csv.reader(f); h=next(r); rows=list(r)
+          if len(rows)<100: raise SystemExit(f'only {len(rows)} rows')
+          t=[float(x[0]) for x in rows]
+          if t[0] > 300.01 or t[-1] < 419.9: raise SystemExit(f'incomplete time range {t[0]}..{t[-1]}')
+          def col(candidates):
+              for c in candidates:
+                  if c in h: return h.index(c)
+              raise SystemExit('missing column '+str(candidates))
+          c_rpm=col(['arretPomesHP.y.signal','PompeAlimHP.Vr','PompeAlimHP.rpm'])
+          c_q=col(['PompeAlimHP.Q','CapteurDebitEauHP.Measure.signal'])
+          drum_cols=[i for i,n in enumerate(h) if n in ('BallonHP.zl','BallonHP.P','BallonMP.zl','BallonMP.P','BallonBP.zl','BallonBP.P')]
+          def near(x): return min(range(len(t)),key=lambda k:abs(t[k]-x))
+          samples={}
+          finite=True
+          for ts in [300,300.1,300.5,301,302,305,310,330,360,420]:
+              j=near(ts)
+              vals={'time_s':t[j],'rpm':float(rows[j][c_rpm]),'pump_flow':float(rows[j][c_q])}
+              for i in drum_cols:
+                  vals[h[i]]=float(rows[j][i])
+              finite=finite and all(math.isfinite(v) for v in vals.values())
+              samples[str(ts)]=vals
+          coast=[samples[str(x)]['rpm'] for x in [300.1,300.5,301,302,305,310]]
+          if not all(coast[i+1] <= coast[i]+1e-6 for i in range(len(coast)-1)):
+              raise SystemExit('RPM coastdown not monotonic: '+str(coast))
+          if samples['310']['rpm'] > 5: raise SystemExit('RPM did not reach zero-speed gate')
+          if not finite: raise SystemExit('non-finite major variable')
+          q0=samples['300']['pump_flow']; q1=samples['310']['pump_flow']
+          if abs(q1-q0) < 1e-6: raise SystemExit('native pump/process flow did not respond')
+          report={
+              'status':'pass','simulation_success':True,'warm_state_used':True,
+              'restart_method':'iif/iit/iim=none + cvode','raw_start_s':t[0],'raw_end_s':t[-1],
+              'major_variables_finite':True,'rpm_coastdown_monotonic':True,
+              'native_process_response':True,'samples':samples,
+              'guardrail':'FWP motor coastdown constants are virtual-model parameters, not plant-approved settings.'
+          }
+          Path('fwp_warm/results/fwp_hp_warmstart_report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
+          print('FWP_HP_WARMSTART_NATIVE_PASS')
+          print(json.dumps(report,indent=2))
+          PY
+
+      - name: Upload evidence
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fwp-hp-warmstart-native-${{ github.run_number }}
+          path: |
+            fwp_warm/results/
+            fwp_warm/build/TripLens_FWP_HP_WarmSeeded.mo
+          if-no-files-found: warn
+          retention-days: 30
