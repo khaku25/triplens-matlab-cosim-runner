@@ -272,7 +272,7 @@ jobs:
               'native_numerical_regularization':'PompeAlimHP and perteChargeK3 continuous_flow_reversal=true; HP valve keeps native Cv law with NORMAL_100 fixed density to avoid invalid IF97 trial states',
               'gt_boundary':'NORMAL_100 606.94 kg/s / 893.75 K',
               'coastdown_source':'R&D FWP virtual motor surrogate; tau approx 1 s, not plant-approved',
-              'initialization':'native 0-300 seed -> regularized continuous 300-420 runtime; no t=301 topology switch'
+              'initialization':'native 0-300 seed -> regularized 300-301 transition -> same-topology 301-420 checkpoint continuation'
           },indent=2),encoding='utf-8')
           print('FWP_HP_WARM_MODEL_BUILD_PASS')
           PY
@@ -337,8 +337,8 @@ jobs:
             variableFilter="^(time|arretPomesHP\\.y\\.signal|PompeAlimHP\\.Q|CapteurDebitEauHP\\.Measure\\.signal|Ballon(HP|MP|BP)\\.(P|zl)|tripLensFwpHpDischargeNRV\\.opening)$");
           getErrorString();
           buildModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_HP_TripRuntime,
-            startTime=300, stopTime=420, numberOfIntervals=1200, tolerance=1e-3,
-            method="dassl", outputFormat="csv", fileNamePrefix="fwp_hp_full_raw",
+            startTime=301, stopTime=420, numberOfIntervals=1190, tolerance=1e-3,
+            method="dassl", outputFormat="csv", fileNamePrefix="fwp_hp_post_transition_raw",
             variableFilter="^(time|arretPomesHP\\.y\\.signal|PompeAlimHP\\.Q|CapteurDebitEauHP\\.Measure\\.signal|Ballon(HP|MP|BP)\\.(P|zl)|tripLensFwpHpDischargeNRV\\.opening)$");
           getErrorString();
           MOS
@@ -349,7 +349,7 @@ jobs:
             omc /workspace/build/build_trip_restart.mos | tee fwp_warm/results/build_trip_restart.log
           test -x fwp_warm/results/fwp_hp_transition_state
           test -x fwp_warm/results/fwp_hp_transition_raw
-          test -x fwp_warm/results/fwp_hp_full_raw
+          test -x fwp_warm/results/fwp_hp_post_transition_raw
 
       - name: Cross 300-to-301 second HP trip transition
         shell: bash
@@ -380,7 +380,7 @@ jobs:
           test -s fwp_warm/results/fwp_hp_transition_state_res.mat
           test -s fwp_warm/results/fwp_hp_transition_raw.csv
 
-      - name: Run 300-to-420 second continuous-topology physical response
+      - name: Run 301-to-420 second same-topology physical response
         shell: bash
         run: |
           set -euo pipefail
@@ -391,33 +391,60 @@ jobs:
               -v "$PWD/fwp_warm/results:/work" \
               -w /work \
               openmodelica/openmodelica:v1.27.0-minimal \
-              ./fwp_hp_full_raw \
-                -iif=/work/fwp_hp_warm_res.mat \
-                -iit=300 \
+              ./fwp_hp_post_transition_raw \
+                -iif=/work/fwp_hp_transition_state_res.mat \
+                -iit=301 \
                 -iim=none \
                 -s="$solver" \
                 -noEventEmit \
                 -initialStepSize=1e-5 \
                 -maxStepSize=0.1 \
-                -r="/work/fwp_hp_trip_raw_${solver}.csv" \
+                -r="/work/fwp_hp_post_transition_${solver}.csv" \
                 -lv=LOG_INIT,LOG_STATS \
-              | tee "fwp_warm/results/trip_full_${solver}.log"
+              | tee "fwp_warm/results/trip_post_transition_${solver}.log"
             rc=${PIPESTATUS[0]}
             set -e
             if [[ "$rc" -eq 0 ]] && grep -q "The simulation finished successfully" \
-                "fwp_warm/results/trip_full_${solver}.log"; then
+                "fwp_warm/results/trip_post_transition_${solver}.log"; then
               chosen="$solver"
               break
             fi
-            if [[ -s "fwp_warm/results/fwp_hp_trip_raw_${solver}.csv" ]]; then
-              tail -n 6 "fwp_warm/results/fwp_hp_trip_raw_${solver}.csv"
+            if [[ -s "fwp_warm/results/fwp_hp_post_transition_${solver}.csv" ]]; then
+              tail -n 6 "fwp_warm/results/fwp_hp_post_transition_${solver}.csv"
             fi
           done
           test -n "$chosen"
-          mv "fwp_warm/results/fwp_hp_trip_raw_${chosen}.csv" \
-             fwp_warm/results/fwp_hp_trip_raw.csv
-          printf 'continuous-topology-%s\n' "$chosen" \
+          printf 'same-topology-checkpoint-%s\n' "$chosen" \
             > fwp_warm/results/selected_solver.txt
+
+          python3 - "$chosen" <<'PY'
+          import csv,sys
+          from pathlib import Path
+          solver=sys.argv[1]
+          paths=[
+              Path('fwp_warm/results/fwp_hp_transition_raw.csv'),
+              Path(f'fwp_warm/results/fwp_hp_post_transition_{solver}.csv'),
+          ]
+          header=None
+          rows_out=[]
+          last_time=None
+          for path in paths:
+              with path.open(newline='',encoding='utf-8-sig') as f:
+                  r=csv.reader(f); current=next(r); rows=list(r)
+              if header is None:
+                  header=current
+              elif current != header:
+                  raise SystemExit(f'RAW headers differ: {path}')
+              for row in rows:
+                  t=float(row[0].strip('"'))
+                  if last_time is None or t > last_time + 1e-7:
+                      rows_out.append(row)
+                      last_time=t
+          target=Path('fwp_warm/results/fwp_hp_trip_raw.csv')
+          with target.open('w',newline='',encoding='utf-8') as f:
+              w=csv.writer(f); w.writerow(header); w.writerows(rows_out)
+          print('COMBINED_RAW_ROWS',len(rows_out),'END_TIME',last_time)
+          PY
           test -s fwp_warm/results/fwp_hp_trip_raw.csv
 
       - name: Validate warm-started physical response
@@ -569,12 +596,12 @@ jobs:
             fwp_warm/results/warm.log
             fwp_warm/results/build_trip_restart.log
             fwp_warm/results/trip_transition_*.log
-            fwp_warm/results/trip_full_*.log
+            fwp_warm/results/trip_post_transition_*.log
             fwp_warm/results/selected_solver.txt
             fwp_warm/results/fwp_hp_warm_res.mat
             fwp_warm/results/fwp_hp_transition_state_res.mat
             fwp_warm/results/fwp_hp_transition_raw.csv
-            fwp_warm/results/fwp_hp_trip_raw_*.csv
+            fwp_warm/results/fwp_hp_post_transition_*.csv
             fwp_warm/results/fwp_hp_trip_raw.csv
             fwp_warm/results/fwp_hp_warmstart_report.json
             fwp_warm/build/TripLens_FWP_HP_WarmSeeded.mo
