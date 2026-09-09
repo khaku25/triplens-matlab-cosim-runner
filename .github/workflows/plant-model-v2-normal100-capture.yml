@@ -5,11 +5,13 @@ on:
     branches: [plant-model-v2]
     paths:
       - 'plant_v2/modelica/TripLens_Plant_V2_Normal100.mo'
+      - 'plant_v2/scripts/install_normal100_windows.ps1'
       - '.github/workflows/plant-model-v2-normal100-capture.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   capture-normal100:
@@ -136,7 +138,6 @@ jobs:
 
       - name: Upload NORMAL_100 golden state
         uses: actions/upload-artifact@v4
-        if: always()
         with:
           name: plant-v2-normal100-state-${{ github.run_number }}
           path: |
@@ -146,5 +147,29 @@ jobs:
             plant_v2/build/normal100/capture.log
             plant_v2/build/normal100/restart.log
             plant_v2/modelica/TripLens_Plant_V2_Normal100.mo
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 30
+
+  install-windows-normal100:
+    needs: capture-normal100
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download this run's validated NORMAL_100 state
+        uses: actions/download-artifact@v4
+        with:
+          name: plant-v2-normal100-state-${{ github.run_number }}
+          path: normal100_artifact
+      - name: Install state registry and select NORMAL_100
+        shell: cmd
+        run: |
+          "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%GITHUB_WORKSPACE%\plant_v2\scripts\install_normal100_windows.ps1" -SourceRoot "%GITHUB_WORKSPACE%\normal100_artifact" -StateRoot "C:\TripLensStates"
+      - name: Verify Windows Plant v2 state installation
+        shell: cmd
+        run: |
+          if not exist C:\TripLensStates\NORMAL_100\state.mat exit /b 1
+          if not exist C:\TripLensStates\NORMAL_100\TripLens_Plant_V2_Normal100.mo exit /b 1
+          if not exist C:\TripLensStates\ACTIVE\state.mat exit /b 1
+          type C:\TripLensStates\ACTIVE\state.txt
+          echo PLANT_V2_NORMAL100_WINDOWS_READY
