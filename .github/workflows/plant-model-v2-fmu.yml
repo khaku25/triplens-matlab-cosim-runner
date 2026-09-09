@@ -1,13 +1,6 @@
 name: Plant Model v2 Co-Simulation FMU
 
 on:
-  push:
-    branches: [integrate/plant-v2-fwp-hp-validated]
-    paths:
-      - 'plant_v2/scripts/build_plant_v2_cosim.py'
-      - 'plant_v2/scripts/validate_plant_v2.py'
-      - 'plant_v2/plant_model_v2_contract.json'
-      - '.github/workflows/plant-model-v2-fmu.yml'
   workflow_dispatch:
 
 permissions:
