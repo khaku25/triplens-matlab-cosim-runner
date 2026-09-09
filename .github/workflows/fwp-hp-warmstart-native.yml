@@ -102,6 +102,19 @@ jobs:
           if n!=1:
               raise SystemExit(f'HP inlet loss flow-regularization count={n}')
 
+          # Keep the original HP valve characteristic and signal, but remove
+          # its IF97 property call from the reversing-flow NLS. The fixed
+          # density is read from the NORMAL_100 solved state, not guessed.
+          native_hp_valve=(
+              'ThermoSysPro.WaterSteam.PressureLosses.ControlValve '
+              'Vanne_alimentationMPHP1(')
+          regularized_hp_valve=(
+              'TripLensFwpHpRegularizedControlValve '
+              'Vanne_alimentationMPHP1(')
+          if txt.count(native_hp_valve)!=1:
+              raise SystemExit(f'HP valve type replacement count={txt.count(native_hp_valve)}')
+          txt=txt.replace(native_hp_valve,regularized_hp_valve,1)
+
           # CombinedCycle_TripTAC has no HP-pump discharge non-return isolation.
           # The static pump loses its positive-flow operating point before Q=0.
           # Use a continuous, speed-coupled reverse-leak resistance so the DAE
@@ -136,6 +149,40 @@ jobs:
               '    hydraulicResistance = Ropen + (Rclosed - Ropen)*(1 - opening)^8;\n'
               '    deltaP = hydraulicResistance*Q;\n'
               '  end TripLensFwpHpRegularizedNRV;\n'
+              '  model TripLensFwpHpRegularizedControlValve\n'
+              '    parameter ThermoSysPro.Units.Cv Cvmax=8005.42;\n'
+              '    parameter Integer mode=0 "Compatibility with native valve modifier";\n'
+              '    parameter Boolean continuous_flow_reversal=true;\n'
+              '    parameter Modelica.SIunits.Density rhoFixed=926.1664940825133\n'
+              '      "NORMAL_100 solved-state density; regenerate when golden state changes";\n'
+              '  protected\n'
+              '    parameter Real eps=1.0;\n'
+              '    parameter Modelica.SIunits.MassFlowRate Qeps=1e-3;\n'
+              '  public\n'
+              '    ThermoSysPro.Units.Cv Cv(start=100);\n'
+              '    Modelica.SIunits.MassFlowRate Q(start=75);\n'
+              '    Modelica.SIunits.DifferentialPressure deltaP;\n'
+              '    Modelica.SIunits.Density rho;\n'
+              '    Modelica.SIunits.AbsolutePressure Pm(start=1e5);\n'
+              '    Modelica.SIunits.SpecificEnthalpy h(start=1e5);\n'
+              '    ThermoSysPro.InstrumentationAndControl.Connectors.InputReal Ouv;\n'
+              '    ThermoSysPro.WaterSteam.Connectors.FluidInlet C1;\n'
+              '    ThermoSysPro.WaterSteam.Connectors.FluidOutlet C2;\n'
+              '  equation\n'
+              '    C1.h = C2.h;\n'
+              '    C1.Q = C2.Q;\n'
+              '    h = C1.h;\n'
+              '    Q = C1.Q;\n'
+              '    deltaP = C1.P - C2.P;\n'
+              '    0 = noEvent(if Q > Qeps then C1.h - C1.h_vol else if Q < -Qeps then\n'
+              '      C2.h - C2.h_vol else C1.h - 0.5*((C1.h_vol - C2.h_vol)*\n'
+              '      Modelica.Math.sin(Modelica.Constants.pi*Q/2/Qeps) + C1.h_vol + C2.h_vol));\n'
+              '    deltaP*Cv*abs(Cv) = 1.733e12*\n'
+              '      ThermoSysPro.Functions.ThermoSquare(Q, eps)/rhoFixed^2;\n'
+              '    Cv = Ouv.signal*Cvmax;\n'
+              '    Pm = (C1.P + C2.P)/2;\n'
+              '    rho = rhoFixed;\n'
+              '  end TripLensFwpHpRegularizedControlValve;\n'
               '  TripLensFwpHpRegularizedNRV tripLensFwpHpDischargeNRV\n'
               '    "R&D-only regularized non-return isolation; not a Competition tag";\n')
           txt,n=re.subn(r'^equation\s*$', declaration+'equation', txt, count=1, flags=re.M)
@@ -166,9 +213,11 @@ jobs:
               'new_motor_component_inserted':False,
               'native_discharge_check_valve_inserted':False,
               'r_and_d_regularized_isolation_adapter_inserted':True,
+              'r_and_d_hp_valve_regularized':True,
+              'hp_valve_fixed_density_kg_m3':926.1664940825133,
               'r_and_d_discharge_isolation':'TripLensFwpHpRegularizedNRV between PompeAlimHP and Vanne_alimentationMPHP1; speed-coupled continuous resistance, no field/Competition tag',
               'r_and_d_discharge_isolation_parameters':'VrOpen=1399 rpm, VrClosed=1300 rpm, Rclosed=2e8 Pa.s/kg; virtual R&D values pending plant/OEM data',
-              'native_numerical_regularization':'PompeAlimHP, perteChargeK3, and Vanne_alimentationMPHP1 continuous_flow_reversal=true; library Qeps smoothing only',
+              'native_numerical_regularization':'PompeAlimHP and perteChargeK3 continuous_flow_reversal=true; HP valve keeps native Cv law with NORMAL_100 fixed density to avoid invalid IF97 trial states',
               'gt_boundary':'NORMAL_100 606.94 kg/s / 893.75 K',
               'coastdown_source':'R&D FWP virtual motor surrogate; tau approx 1 s, not plant-approved',
               'initialization':'emit-protected solved snapshot -> dedicated 300-420 CVODE executable with regularized discharge isolation'
