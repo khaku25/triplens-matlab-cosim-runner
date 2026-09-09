@@ -76,8 +76,290 @@ jobs:
               txt,
               count=1)
           if n!=1: raise SystemExit(f'HP native flow-regularization count={n}')
+
+          # CombinedCycle_TripTAC has no discharge non-return isolation, so a
+          # stopped static pump can be forced into an unsolved reverse-flow
+          # operating point by the live HP feedwater header. ThermoSysPro's own
+          # pump example uses its native IdealCheckValve for this boundary.
+          declaration=(
+              '  ThermoSysPro.WaterSteam.PressureLosses.IdealCheckValve\n'
+              '    tripLensFwpHpDischargeNRV(\n'
+              '      dPOuvert=0.01,\n'
+              '      Qmin=1e-6,\n'
+              '      continuous_flow_reversal=true)\n'
+              '    "R&D generic HP FWP discharge isolation; not a Competition tag";\n')
+          txt,n=re.subn(r'^equation\s*
+          Path('fwp_warm/build/TripLens_FWP_HP_WarmSeeded.mo').write_text(txt,encoding='utf-8')
+          Path('fwp_warm/results/contract.json').write_text(json.dumps({
+              'base_model':'CombinedCycle_TripTAC',
+              'thermosyspro_commit':'db81ae1b5a6a85f6c6c7693244cafa6087e18ff5',
+              'normal_hold_s':300,
+              'trip_request_s':300.0,
+              'breaker_open_reference_s':300.08,
+              'pump':'PompeAlimHP',
+              'native_topology_modified':True,
+              'new_motor_component_inserted':False,
+              'native_discharge_check_valve_inserted':True,
+              'r_and_d_discharge_isolation':'ThermoSysPro IdealCheckValve between PompeAlimHP and Vanne_alimentationMPHP1; generic virtual NRV, no field tag, not plant-approved',
+              'native_numerical_regularization':'PompeAlimHP.continuous_flow_reversal=true; built-in Qeps smoothing only',
+              'gt_boundary':'NORMAL_100 606.94 kg/s / 893.75 K',
+              'coastdown_source':'R&D FWP virtual motor surrogate; tau approx 1 s, not plant-approved',
+              'initialization':'emit-protected solved snapshot -> dedicated 300-420 CVODE executable with native discharge isolation'
+          },indent=2),encoding='utf-8')
+          print('FWP_HP_WARM_MODEL_BUILD_PASS')
+          PY
+
+      - name: Install Modelica 3.2.3
+        shell: bash
+        run: |
+          cat > fwp_warm/build/install.mos <<'MOS'
+          installPackage(Modelica, "3.2.3", exactMatch=true);
+          getErrorString();
+          MOS
+          docker run --rm \
+            -v "$PWD/fwp_warm/omhome:/root" \
+            -v "$PWD/fwp_warm:/workspace" -w /workspace \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            omc /workspace/build/install.mos | tee fwp_warm/results/install.log
+
+      - name: Create 300 s warm state
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > fwp_warm/build/warm.mos <<'MOS'
+          setCommandLineOptions("--std=3.4");
+          loadModel(Modelica,{"3.2.3"}); getErrorString();
+          loadFile("/workspace/vendor/ThermoSysPro/ThermoSysPro/package.mo"); getErrorString();
+          loadFile("/workspace/build/TripLens_FWP_HP_WarmSeeded.mo"); getErrorString();
+          cd("/workspace/results");
+          checkModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_HP_WarmSeeded); getErrorString();
+          simulate(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_HP_WarmSeeded,
+            startTime=0, stopTime=300, numberOfIntervals=3000, tolerance=1e-3,
+            method="dassl", outputFormat="mat", fileNamePrefix="fwp_hp_warm",
+            variableFilter=".*",
+            simflags="-iim=symbolic -noEventEmit -emit_protected");
+          getErrorString();
+          MOS
+          docker run --rm \
+            -v "$PWD/fwp_warm/omhome:/root" \
+            -v "$PWD/fwp_warm:/workspace" -w /workspace \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            omc /workspace/build/warm.mos | tee fwp_warm/results/warm.log
+          test -s fwp_warm/results/fwp_hp_warm_res.mat
+          grep -q "The simulation finished successfully" fwp_warm/results/warm.log
+
+      - name: Build dedicated 300-to-420 CVODE restart executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > fwp_warm/build/build_trip_restart.mos <<'MOS'
+          setCommandLineOptions("--std=3.4");
+          loadModel(Modelica,{"3.2.3"}); getErrorString();
+          loadFile("/workspace/vendor/ThermoSysPro/ThermoSysPro/package.mo"); getErrorString();
+          loadFile("/workspace/build/TripLens_FWP_HP_WarmSeeded.mo"); getErrorString();
+          cd("/workspace/results");
+          buildModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_HP_WarmSeeded,
+            startTime=300, stopTime=420, numberOfIntervals=1200, tolerance=1e-3,
+            method="cvode", outputFormat="csv", fileNamePrefix="fwp_hp_trip_restart",
+            variableFilter="^(time|arretPomesHP\\.y\\.signal|PompeAlimHP\\.Q|CapteurDebitEauHP\\.Measure\\.signal|Ballon(HP|MP|BP)\\.(P|zl)|tripLensFwpHpDischargeNRV\\.ouvert)$");
+          getErrorString();
+          MOS
+          docker run --rm \
+            -v "$PWD/fwp_warm/omhome:/root" \
+            -v "$PWD/fwp_warm:/workspace" -w /workspace \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            omc /workspace/build/build_trip_restart.mos | tee fwp_warm/results/build_trip_restart.log
+          test -x fwp_warm/results/fwp_hp_trip_restart
+
+      - name: Restart from solved state and run FWP-HP trip physics
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$PWD/fwp_warm/results:/work" \
+            -w /work \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            ./fwp_hp_trip_restart \
+              -iif=/work/fwp_hp_warm_res.mat \
+              -iit=300 \
+              -iim=none \
+              -noEventEmit \
+              -r=/work/fwp_hp_trip_raw.csv \
+              -lv=LOG_INIT,LOG_STATS | tee fwp_warm/results/trip_restart.log
+          test -s fwp_warm/results/fwp_hp_trip_raw.csv
+          grep -q "The simulation finished successfully" fwp_warm/results/trip_restart.log
+
+      - name: Validate warm-started physical response
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import csv,json,math
+
+          p=Path('fwp_warm/results/fwp_hp_trip_raw.csv')
+          with p.open(newline='',encoding='utf-8-sig') as f:
+              r=csv.reader(f)
+              raw_h=next(r)
+              rows=list(r)
+          h=[x.strip().strip('"') for x in raw_h]
+          if len(rows)<100:
+              raise SystemExit(f'RAW too short: {len(rows)} rows')
+
+          print('RAW_ROWS',len(rows),'RAW_COLUMNS',len(h))
+          relevant=[n for n in h if any(k in n for k in ('PompeAlimHP','arretPomesHP','BallonHP','BallonMP','BallonBP','CapteurDebitEauHP'))]
+          print('RELEVANT_HEADERS',json.dumps(relevant,ensure_ascii=False))
+
+          def find_col(label, exact=(), contains_all=(), suffixes=()):
+              for c in exact:
+                  if c in h:
+                      print(label,'=',c)
+                      return h.index(c)
+              for i,n in enumerate(h):
+                  if contains_all and all(k in n for k in contains_all):
+                      if not suffixes or any(n.endswith(s) for s in suffixes):
+                          print(label,'=',n)
+                          return i
+              raise SystemExit(f'missing {label}; relevant headers={relevant}')
+
+          c_time=find_col('time',exact=('time',))
+          c_rpm=find_col(
+              'rpm',
+              exact=('arretPomesHP.y.signal','arretPomesHP.y','PompeAlimHP.Vr','PompeAlimHP.rpm_or_mpower.signal'),
+              contains_all=('arretPomesHP',), suffixes=('.signal','.y'))
+          try:
+              c_q=find_col('native_pump_flow',exact=('PompeAlimHP.Q',),contains_all=('PompeAlimHP',),suffixes=('.Q',))
+          except SystemExit:
+              c_q=find_col('native_feedwater_flow',exact=('CapteurDebitEauHP.Measure.signal',),contains_all=('CapteurDebitEauHP',),suffixes=('.signal',))
+
+          c_nrv=find_col(
+              'native_discharge_nrv_open',
+              exact=('tripLensFwpHpDischargeNRV.ouvert',),
+              contains_all=('tripLensFwpHpDischargeNRV','ouvert'))
+          drum_names=('BallonHP.zl','BallonHP.P','BallonMP.zl','BallonMP.P','BallonBP.zl','BallonBP.P')
+          drum_cols=[(n,h.index(n)) for n in drum_names if n in h]
+          if not drum_cols:
+              raise SystemExit('no native drum state columns in RAW')
+
+          t=[float(x[c_time]) for x in rows]
+          if not all(math.isfinite(x) for x in t):
+              raise SystemExit('non-finite time')
+          if t[0] > 300.05 or t[-1] < 419.8:
+              raise SystemExit(f'incomplete time range {t[0]}..{t[-1]}')
+          if any(t[i+1] < t[i] for i in range(len(t)-1)):
+              raise SystemExit('time is not monotonic')
+
+          def near(x):
+              return min(range(len(t)),key=lambda k:abs(t[k]-x))
+
+          def as_bool(value):
+              return value.strip().lower() in ('true','1','1.0')
+
+          sample_times=[300,300.1,300.5,301,302,305,310,330,360,419.9]
+          samples={}
+          finite=True
+          for ts in sample_times:
+              j=near(ts)
+              vals={
+                  'time_s':t[j],
+                  'rpm_command':float(rows[j][c_rpm]),
+                  'native_flow':float(rows[j][c_q]),
+                  'native_discharge_nrv_open':as_bool(rows[j][c_nrv]),
+              }
+              for name,i in drum_cols:
+                  vals[name]=float(rows[j][i])
+              finite=finite and all(math.isfinite(v) for v in vals.values())
+              samples[str(ts)]=vals
+
+          coast=[samples[str(x)]['rpm_command'] for x in [300.1,300.5,301,302,305,310]]
+          if not all(coast[i+1] <= coast[i]+1e-6 for i in range(len(coast)-1)):
+              raise SystemExit('RPM coastdown not monotonic: '+str(coast))
+          if samples['310']['rpm_command'] > 5:
+              raise SystemExit('RPM did not reach zero-speed gate: '+str(samples['310']['rpm_command']))
+          if not finite:
+              raise SystemExit('non-finite major variable')
+          if not samples['300']['native_discharge_nrv_open']:
+              raise SystemExit('HP discharge NRV is not open at the normal-state boundary')
+          post_trip_nrv=[samples[str(x)]['native_discharge_nrv_open'] for x in [300.5,301,302,305,310]]
+          if all(post_trip_nrv):
+              raise SystemExit('HP discharge NRV did not close during pump coastdown')
+          post_trip_flow=[samples[str(x)]['native_flow'] for x in [301,302,305,310,330]]
+          if min(post_trip_flow) < -1e-5:
+              raise SystemExit('reverse HP feedwater flow bypassed the discharge NRV: '+str(post_trip_flow))
+
+          # Demand a real native process response, not merely the commanded RPM.
+          q0=samples['300']['native_flow']
+          q_candidates=[samples[str(x)]['native_flow'] for x in [301,302,305,310,330]]
+          max_q_delta=max(abs(q-q0) for q in q_candidates)
+          scale=max(abs(q0),1.0)
+          if max_q_delta <= max(1e-6,1e-4*scale):
+              raise SystemExit(f'native pump/process flow did not respond: q0={q0}, max_delta={max_q_delta}')
+
+          report={
+              'status':'pass',
+              'simulation_success':True,
+              'warm_state_used':True,
+              'restart_method':'emit-protected snapshot + native HP discharge NRV + dedicated CVODE executable + iif/iit/iim=none',
+              'raw_start_s':t[0],
+              'raw_end_s':t[-1],
+              'raw_rows':len(rows),
+              'major_variables_finite':True,
+              'rpm_coastdown_monotonic':True,
+              'native_process_response':True,
+              'native_flow_max_delta':max_q_delta,
+              'native_discharge_nrv_closed_after_trip':True,
+              'resolved_columns':{'rpm':h[c_rpm],'flow':h[c_q],'nrv':h[c_nrv],'drums':[n for n,_ in drum_cols]},
+              'samples':samples,
+              'guardrail':'FWP motor coastdown constants are virtual-model R&D settings, not plant-approved settings.'
+          }
+          Path('fwp_warm/results/fwp_hp_warmstart_report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
+          print('FWP_HP_WARMSTART_NATIVE_PASS')
+          print(json.dumps(report,indent=2))
+          PY
+
+      - name: Normalize generated evidence permissions
+        if: always()
+        shell: bash
+        run: |
+          docker run --rm \
+            -v "$PWD/fwp_warm:/workspace" \
+            alpine:3.22 \
+            sh -c 'chmod -R a+rX /workspace'
+
+      - name: Upload evidence
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fwp-hp-warmstart-native-${{ github.run_number }}
+          path: |
+            fwp_warm/results/contract.json
+            fwp_warm/results/install.log
+            fwp_warm/results/warm.log
+            fwp_warm/results/build_trip_restart.log
+            fwp_warm/results/trip_restart.log
+            fwp_warm/results/fwp_hp_warm_res.mat
+            fwp_warm/results/fwp_hp_trip_raw.csv
+            fwp_warm/results/fwp_hp_warmstart_report.json
+            fwp_warm/build/TripLens_FWP_HP_WarmSeeded.mo
+          if-no-files-found: warn
+          retention-days: 30
+, declaration+'equation', txt, count=1, flags=re.M)
+          if n!=1: raise SystemExit(f'HP discharge NRV declaration count={n}')
+
+          discharge_pat=re.compile(
+              r'  connect\(Vanne_alimentationMPHP1\.C1,\s*PompeAlimHP\.C2\)\s*'
+              r'annotation\s*\(Line\(.*?\)\);\s*',
+              re.S)
+          discharge_repl=(
+              '  connect(PompeAlimHP.C2, tripLensFwpHpDischargeNRV.C1);\n'
+              '  connect(tripLensFwpHpDischargeNRV.C2, Vanne_alimentationMPHP1.C1);\n')
+          txt,n=discharge_pat.subn(discharge_repl,txt,count=1)
+          if n!=1: raise SystemExit(f'HP discharge connection replacement count={n}')
+
           if 'connect(PompeAlimHP.rpm_or_mpower, arretPomesHP.y)' not in txt:
               raise SystemExit('native HP pump speed connection missing')
+          if 'connect(PompeAlimHP.C2, tripLensFwpHpDischargeNRV.C1)' not in txt:
+              raise SystemExit('native HP discharge NRV inlet connection missing')
           Path('fwp_warm/build/TripLens_FWP_HP_WarmSeeded.mo').write_text(txt,encoding='utf-8')
           Path('fwp_warm/results/contract.json').write_text(json.dumps({
               'base_model':'CombinedCycle_TripTAC',
