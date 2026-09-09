@@ -1,0 +1,37 @@
+name: Publish Trip Semantics Installer Failure
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish-trip-semantics-install-failure.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: trip-breaker-semantics-2
+          run-id: 34313487831
+          github-token: ${{ github.token }}
+          path: evidence
+      - name: Publish installer failure log
+        shell: bash
+        run: |
+          set -euo pipefail
+          find evidence -maxdepth 3 -type f -print
+          test -f evidence/trip_semantics_v2_install.log
+          mkdir -p docs/evidence
+          cp evidence/trip_semantics_v2_install.log docs/evidence/trip_semantics_v2_install_failure_run2.txt
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add docs/evidence/trip_semantics_v2_install_failure_run2.txt
+          git commit -m 'Record Trip semantics v2 installer failure evidence' || exit 0
+          git push
