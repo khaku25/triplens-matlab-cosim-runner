@@ -118,6 +118,41 @@ jobs:
           # Use a continuous, speed-coupled reverse-leak resistance so the DAE
           # remains one structure through coastdown. Keep it inside R&D only.
           declaration=(
+              '  model TripLensFwpHpRegularizedPipePressureLoss\n'
+              '    parameter Real K=10;\n'
+              '    parameter Modelica.SIunits.Position z1=0;\n'
+              '    parameter Modelica.SIunits.Position z2=0;\n'
+              '    parameter Modelica.SIunits.Density rhoFixed=10.426265903235906\n'
+              '      "NORMAL_100/t=301 solved-state density; regenerate when golden state changes";\n'
+              '  protected\n'
+              '    constant Modelica.SIunits.Acceleration g=Modelica.Constants.g_n;\n'
+              '    parameter Real eps=1e-3;\n'
+              '    parameter Modelica.SIunits.MassFlowRate Qeps=1e-3;\n'
+              '  public\n'
+              '    ThermoSysPro.Units.DifferentialPressure deltaPf;\n'
+              '    ThermoSysPro.Units.DifferentialPressure deltaPg;\n'
+              '    ThermoSysPro.Units.DifferentialPressure deltaP;\n'
+              '    Modelica.SIunits.MassFlowRate Q(start=100);\n'
+              '    Modelica.SIunits.Density rho(start=10.4);\n'
+              '    Modelica.SIunits.AbsolutePressure Pm(start=1e5);\n'
+              '    Modelica.SIunits.SpecificEnthalpy h(start=1e5);\n'
+              '    ThermoSysPro.WaterSteam.Connectors.FluidInlet C1;\n'
+              '    ThermoSysPro.WaterSteam.Connectors.FluidOutlet C2;\n'
+              '  equation\n'
+              '    C1.P - C2.P = deltaP;\n'
+              '    C2.Q = C1.Q;\n'
+              '    C2.h = C1.h;\n'
+              '    h = C1.h;\n'
+              '    Q = C1.Q;\n'
+              '    0 = noEvent(if Q > Qeps then C1.h - C1.h_vol else if Q < -Qeps then\n'
+              '      C2.h - C2.h_vol else C1.h - 0.5*((C1.h_vol - C2.h_vol)*\n'
+              '      Modelica.Math.sin(Modelica.Constants.pi*Q/2/Qeps) + C1.h_vol + C2.h_vol));\n'
+              '    rho = rhoFixed;\n'
+              '    deltaPf = K*ThermoSysPro.Functions.ThermoSquare(Q, eps)/rho;\n'
+              '    deltaPg = rho*g*(z2 - z1);\n'
+              '    deltaP = deltaPf + deltaPg;\n'
+              '    Pm = (C1.P + C2.P)/2;\n'
+              '  end TripLensFwpHpRegularizedPipePressureLoss;\n'
               '  model TripLensFwpHpRegularizedNRV\n'
               '    parameter ThermoSysPro.Units.AngularVelocity_rpm VrOpen=1399\n'
               '      "Virtual R&D full-open speed; plant/OEM value pending";\n'
@@ -225,6 +260,17 @@ jobs:
           # replaces only the HP valve equation, and imports the solved state.
           warm_txt=txt
           runtime_txt=txt.replace(native_hp_valve,regularized_hp_valve,1)
+          native_hp_steam_pipe=(
+              'ThermoSysPro.WaterSteam.PressureLosses.PipePressureLoss '
+              'lumpedStraightPipeK2(')
+          if runtime_txt.count(native_hp_steam_pipe)!=1:
+              raise SystemExit(
+                  f'HP steam pipe regularization target count='
+                  f'{runtime_txt.count(native_hp_steam_pipe)}')
+          runtime_txt=runtime_txt.replace(
+              native_hp_steam_pipe,
+              'TripLensFwpHpRegularizedPipePressureLoss lumpedStraightPipeK2(',
+              1)
           runtime_txt=runtime_txt.replace(
               'model TripLens_FWP_HP_WarmSeeded\n',
               'model TripLens_FWP_HP_TripRuntime\n',
@@ -263,6 +309,8 @@ jobs:
               'native_discharge_check_valve_inserted':False,
               'r_and_d_regularized_isolation_adapter_inserted':True,
               'r_and_d_hp_valve_regularized':True,
+              'r_and_d_hp_steam_pipe_regularized':True,
+              'hp_steam_pipe_fixed_density_kg_m3':10.426265903235906,
               'post_transition_fixed_closed_topology':True,
               'checkpoint_state_output_intervals':10,
               'state_continuous_piecewise_isolation':True,
@@ -270,7 +318,7 @@ jobs:
               'hp_valve_fixed_density_kg_m3':926.1664940825133,
               'r_and_d_discharge_isolation':'TripLensFwpHpRegularizedNRV between PompeAlimHP and Vanne_alimentationMPHP1; speed-coupled continuous resistance, no field/Competition tag',
               'r_and_d_discharge_isolation_parameters':'VrOpen=1399 rpm, VrClosed=1300 rpm, Rclosed=2e10 Pa.s/kg; virtual R&D values pending plant/OEM data',
-              'native_numerical_regularization':'PompeAlimHP and perteChargeK3 continuous_flow_reversal=true; HP valve keeps native Cv law with NORMAL_100 fixed density to avoid invalid IF97 trial states',
+              'native_numerical_regularization':'PompeAlimHP and perteChargeK3 continuous_flow_reversal=true; HP valve keeps native Cv law; lumpedStraightPipeK2 keeps native K law with NORMAL_100/t=301 fixed densities to avoid invalid IF97 solver trial states',
               'gt_boundary':'NORMAL_100 606.94 kg/s / 893.75 K',
               'coastdown_source':'R&D FWP virtual motor surrogate; tau approx 1 s, not plant-approved',
               'initialization':'native 0-300 seed -> regularized 300-301 transition -> state-continuous fixed-isolation 301-420 runtime'
@@ -573,7 +621,7 @@ jobs:
               'post_trip_isolation_flow_bound_kg_s':0.2,
               'resolved_columns':{'rpm':h[c_rpm],'flow':h[c_q],'isolation':h[c_nrv],'drums':[n for n,_ in drum_cols]},
               'samples':samples,
-              'guardrail':'FWP motor coastdown constants are virtual-model R&D settings, not plant-approved settings.'
+              'guardrail':'FWP motor coastdown constants and fixed-density numerical regularizers are R&D settings, not plant-approved settings.'
           }
           Path('fwp_warm/results/fwp_hp_warmstart_report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
           print('FWP_HP_WARMSTART_NATIVE_PASS')
