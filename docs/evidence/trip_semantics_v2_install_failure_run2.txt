@@ -1,0 +1,12 @@
+[경고: 'TripLens_ECMS_DigitalTwin/Protection_Control/A_Logic_Core'에서 참조하는 모델 'TripLens_ECMS_A_Logic_Core'을(를) 찾을 수 없습니다.] 
+[> load_system>i_load_system (44번 라인)
+load_system (20번 라인)에서
+apply_trip_breaker_semantics_v2 (31번 라인)에서] 
+[경고: 'TripLens_ECMS_DigitalTwin/FWP_HP_Operation'에서 참조하는 모델 'TripLens_ECMS_FWP_HP_Operation_Core'을(를) 찾을 수 없습니다.] 
+[> load_system>i_load_system (44번 라인)
+load_system (20번 라인)에서
+apply_trip_breaker_semantics_v2 (31번 라인)에서] 
+{다음 사용 중 오류가 발생함: apply_trip_breaker_semantics_v2 (105번 라인)
+'TripLens_ECMS_DigitalTwin/FWP_HP_Operation'에서 참조하는 모델 'TripLens_ECMS_FWP_HP_Operation_Core'을(를) 찾을 수 없습니다.
+} 
+ERROR: MATLAB error Exit Status: 0x00000001
