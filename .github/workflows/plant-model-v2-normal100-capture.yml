@@ -1,0 +1,202 @@
+name: Plant Model v2 NORMAL_100 Golden State
+
+on:
+  push:
+    branches: [plant-model-v2]
+    paths:
+      - 'plant_v2/modelica/TripLens_Plant_V2_Normal100.mo'
+      - 'plant_v2/scripts/install_normal100_windows.ps1'
+      - '.github/workflows/plant-model-v2-normal100-capture.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  capture-normal100:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare pinned ThermoSysPro
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf plant_v2/build/normal100 legacy_exact/vendor/ThermoSysPro
+          mkdir -p plant_v2/build/normal100/omhome legacy_exact/vendor
+          git clone --no-checkout https://github.com/Dwarf-Planet-Project/ThermoSysPro.git legacy_exact/vendor/ThermoSysPro
+          git -C legacy_exact/vendor/ThermoSysPro checkout --detach db81ae1b5a6a85f6c6c7693244cafa6087e18ff5
+
+      - name: Install Modelica 3.2.3
+        shell: bash
+        run: |
+          docker run --rm \
+            -v "$PWD/plant_v2/build/normal100/omhome:/root" \
+            -v "$PWD/legacy_exact:/workspace" \
+            -w /workspace \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            omc /workspace/modelica/install_dependencies.mos
+
+      - name: Cold-solve v2 NORMAL_100 and capture all internal variables at 300 s
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > plant_v2/build/normal100/capture.mos <<'MOS'
+          setCommandLineOptions("--std=3.4");
+          loadModel(Modelica,{"3.2.3"}); getErrorString();
+          loadFile("/repo/legacy_exact/vendor/ThermoSysPro/ThermoSysPro/package.mo"); getErrorString();
+          loadFile("/repo/plant_v2/modelica/TripLens_Plant_V2_Normal100.mo"); getErrorString();
+          cd("/repo/plant_v2/build/normal100");
+          simulate(TripLens_Plant_V2_Normal100,
+            startTime=0,
+            stopTime=300,
+            numberOfIntervals=3000,
+            tolerance=1e-3,
+            method="dassl",
+            outputFormat="mat",
+            variableFilter=".*",
+            simflags="-iim=symbolic -noEventEmit -emit_protected",
+            fileNamePrefix="plant_v2_normal100");
+          getErrorString();
+          MOS
+          docker run --rm \
+            -v "$PWD/plant_v2/build/normal100/omhome:/root" \
+            -v "$PWD:/repo" \
+            -w /repo \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            omc /repo/plant_v2/build/normal100/capture.mos | tee plant_v2/build/normal100/capture.log
+          test -s plant_v2/build/normal100/plant_v2_normal100_res.mat
+          grep -q "The simulation finished successfully" plant_v2/build/normal100/capture.log
+
+      - name: Build dedicated 300-to-1000 CVODE restart executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > plant_v2/build/normal100/build_restart.mos <<'MOS'
+          setCommandLineOptions("--std=3.4");
+          loadModel(Modelica,{"3.2.3"}); getErrorString();
+          loadFile("/repo/legacy_exact/vendor/ThermoSysPro/ThermoSysPro/package.mo"); getErrorString();
+          loadFile("/repo/plant_v2/modelica/TripLens_Plant_V2_Normal100.mo"); getErrorString();
+          cd("/repo/plant_v2/build/normal100");
+          buildModel(TripLens_Plant_V2_Normal100,
+            startTime=300,
+            stopTime=1000,
+            numberOfIntervals=7000,
+            tolerance=1e-3,
+            method="cvode",
+            outputFormat="csv",
+            fileNamePrefix="plant_v2_normal100_restart",
+            variableFilter="^(time|Debit\\.y\\.signal|Temperature\\.y\\.signal|arretPomes(HP|Mp|BP)\\.y\\.signal|Alternateur\\.Welec|Ballon(HP|MP|BP)\\.(P|zl))$");
+          getErrorString();
+          MOS
+          docker run --rm \
+            -v "$PWD/plant_v2/build/normal100/omhome:/root" \
+            -v "$PWD:/repo" \
+            -w /repo \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            omc /repo/plant_v2/build/normal100/build_restart.mos | tee plant_v2/build/normal100/build_restart.log
+          test -x plant_v2/build/normal100/plant_v2_normal100_restart
+
+      - name: Restart from 300 s with CVODE and prove no-command hold
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$PWD/plant_v2/build/normal100:/work" \
+            -w /work \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            ./plant_v2_normal100_restart \
+              -iif=/work/plant_v2_normal100_res.mat \
+              -iit=300 \
+              -iim=none \
+              -noEventEmit \
+              -r=/work/normal100_restart.csv \
+              -lv=LOG_INIT,LOG_STATS | tee plant_v2/build/normal100/restart.log
+          test -s plant_v2/build/normal100/normal100_restart.csv
+          grep -q "The simulation finished successfully" plant_v2/build/normal100/restart.log
+
+      - name: Validate NORMAL_100 physical hold
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import csv, json, math, hashlib
+          d=Path('plant_v2/build/normal100')
+          with (d/'normal100_restart.csv').open(newline='') as f:
+              rows=list(csv.DictReader(f))
+          assert rows and abs(float(rows[0]['time'])-300)<1e-6, rows[0]['time'] if rows else 'no rows'
+          assert abs(float(rows[-1]['time'])-1000)<1e-6, rows[-1]['time']
+          constant={
+              'Debit.y.signal':606.94,
+              'Temperature.y.signal':893.75,
+              'arretPomesHP.y.signal':1400.0,
+              'arretPomesMp.y.signal':1400.0,
+              'arretPomesBP.y.signal':1400.0,
+          }
+          for name,target in constant.items():
+              values=[float(r[name]) for r in rows]
+              assert all(math.isfinite(v) for v in values), name
+              assert max(abs(v-target) for v in values) < 1e-8, (name,min(values),max(values))
+          critical=['Alternateur.Welec','BallonHP.P','BallonMP.P','BallonBP.P','BallonHP.zl','BallonMP.zl','BallonBP.zl']
+          summary={}
+          for name in critical:
+              values=[float(r[name]) for r in rows]
+              assert all(math.isfinite(v) for v in values), name
+              summary[name]={'first':values[0],'last':values[-1],'min':min(values),'max':max(values)}
+          report={
+              'status':'pass',
+              'state':'NORMAL_100',
+              'start_s':300,
+              'stop_s':1000,
+              'no_command':True,
+              'gt_flow_kg_s':606.94,
+              'gt_temperature_k':893.75,
+              'fwp_speed_rpm':1400.0,
+              'critical':summary,
+              'state_sha256':hashlib.sha256((d/'plant_v2_normal100_res.mat').read_bytes()).hexdigest(),
+          }
+          (d/'normal100_report.json').write_text(json.dumps(report,indent=2))
+          print(json.dumps(report,indent=2))
+          print('PLANT_V2_NORMAL100_GOLDEN_STATE_PASS')
+          PY
+
+      - name: Upload NORMAL_100 golden state
+        uses: actions/upload-artifact@v4
+        with:
+          name: plant-v2-normal100-state-${{ github.run_number }}
+          path: |
+            plant_v2/build/normal100/plant_v2_normal100_res.mat
+            plant_v2/build/normal100/normal100_restart.csv
+            plant_v2/build/normal100/normal100_report.json
+            plant_v2/build/normal100/capture.log
+            plant_v2/build/normal100/build_restart.log
+            plant_v2/build/normal100/restart.log
+            plant_v2/modelica/TripLens_Plant_V2_Normal100.mo
+          if-no-files-found: error
+          retention-days: 30
+
+  install-windows-normal100:
+    needs: capture-normal100
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download this run's validated NORMAL_100 state
+        uses: actions/download-artifact@v4
+        with:
+          name: plant-v2-normal100-state-${{ github.run_number }}
+          path: normal100_artifact
+      - name: Install state registry and select NORMAL_100
+        shell: cmd
+        run: |
+          "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%GITHUB_WORKSPACE%\plant_v2\scripts\install_normal100_windows.ps1" -SourceRoot "%GITHUB_WORKSPACE%\normal100_artifact" -StateRoot "C:\TripLensStates"
+      - name: Verify Windows Plant v2 state installation
+        shell: cmd
+        run: |
+          if not exist C:\TripLensStates\NORMAL_100\state.mat exit /b 1
+          if not exist C:\TripLensStates\NORMAL_100\TripLens_Plant_V2_Normal100.mo exit /b 1
+          if not exist C:\TripLensStates\ACTIVE\state.mat exit /b 1
+          type C:\TripLensStates\ACTIVE\state.txt
+          echo PLANT_V2_NORMAL100_WINDOWS_READY
