@@ -6,6 +6,7 @@ on:
     paths:
       - 'ecms_contract/trip_breaker_contract_v1.csv'
       - 'ecms_logic/build_trip_breaker_semantics_core.m'
+      - 'matlab/apply_trip_breaker_semantics_v2.m'
       - '.github/workflows/trip-breaker-semantics.yml'
   workflow_dispatch:
 
@@ -31,6 +32,14 @@ jobs:
           findstr /C:"TRIPLENS TRIP BREAKER SEMANTICS PASS=1" trip_breaker_semantics.log >nul || (type trip_breaker_semantics.log & exit /b 1)
           findstr /C:"TRIP_SUCCESS_REQUIRED_BREAKER_CLOSED=0" trip_breaker_semantics.log >nul || exit /b 1
           findstr /C:"DERATING_BREAKER_CLOSED=1" trip_breaker_semantics.log >nul || exit /b 1
+      - name: Apply semantics to integrated ECMS model
+        shell: cmd
+        run: |
+          "C:\Program Files\MATLAB\R2025b\bin\matlab.exe" -batch "addpath(fullfile(getenv('GITHUB_WORKSPACE'),'matlab')); apply_trip_breaker_semantics_v2" > "trip_semantics_v2_install.log" 2>&1
+          findstr /C:"TRIPLENS INTEGRATED TRIP SEMANTICS V2 STRUCTURAL PASS" trip_semantics_v2_install.log >nul || (type trip_semantics_v2_install.log & exit /b 1)
+          findstr /C:"GT_DERATING_RECLASSIFIED=1" trip_semantics_v2_install.log >nul || exit /b 1
+          findstr /C:"GT_52_CLOSED_FEEDBACK_STATEFUL=1" trip_semantics_v2_install.log >nul || exit /b 1
+          findstr /C:"ST_52_CLOSED_FEEDBACK_STATEFUL=1" trip_semantics_v2_install.log >nul || exit /b 1
       - name: Upload semantics evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -38,7 +47,10 @@ jobs:
           name: trip-breaker-semantics-${{ github.run_number }}
           path: |
             trip_breaker_semantics.log
+            trip_semantics_v2_install.log
             outputs/trip_breaker_semantics_report.json
+            outputs/trip_semantics_v2_install_report.json
             outputs/TripLens_ECMS_Trip_Breaker_Semantics_Core.slx
+            outputs/TripLens_ECMS_DigitalTwin_trip_semantics_v2.slx
           if-no-files-found: warn
           retention-days: 30
