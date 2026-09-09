@@ -1,0 +1,41 @@
+name: Export ECMS FWP HP RAW 1ms
+
+on:
+  push:
+    branches: [integration/validated-stack-20260909]
+    paths:
+      - 'ecms_pump_logic/export_fwp_hp_ecms_raw.m'
+      - 'ecms_pump_logic/build_fwp_hp_operation.m'
+      - 'ecms_pump_logic/fwp_hp_settings_v1.csv'
+      - '.github/workflows/ecms-fwp-hp-raw-1ms.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export-ecms-fwp-hp-raw:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Simulate FWP HP ECMS and export 1 ms RAW
+        shell: cmd
+        run: |
+          "C:\Program Files\MATLAB\R2025b\bin\matlab.exe" -batch "addpath(fullfile(getenv('GITHUB_WORKSPACE'),'ecms_pump_logic')); build_fwp_hp_operation; export_fwp_hp_ecms_raw"
+
+      - name: Upload ECMS FWP HP RAW
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ecms-fwp-hp-raw-1ms-${{ github.run_number }}
+          path: |
+            outputs/ecms_fwp_hp_raw_1ms.csv
+            outputs/ecms_fwp_hp_raw_trip_window_1ms.csv
+            outputs/ecms_fwp_hp_raw_1ms_report.json
+            outputs/ecms_fwp_hp_operation_report.json
+            outputs/ecms_fwp_hp_operation_timeline.csv
+          if-no-files-found: warn
+          retention-days: 30
