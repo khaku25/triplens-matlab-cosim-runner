@@ -1,139 +1,125 @@
 # TripLens Plant Model v2
 
-This branch is the integration track for the final commandable plant model.
-It is intentionally isolated from `main` so ongoing ECMS, FMU, alarm and UI work can continue without merge collisions.
+This branch is the R&D integration track for the validated commandable plant baseline. It stays separate from the Competition RAW-only runner.
 
-## Target architecture
+## Baseline scope
 
 ```text
 TripLens Plant Model v2
 
-Physics
+Active baseline
 ├─ GT
 ├─ ST
 ├─ HRSG
-├─ FWP-HP Dynamic
-├─ FWP-IP Dynamic
-├─ FWP-LP Dynamic
-├─ Condensate Pump Dynamic
-└─ CW Pump Dynamic
+└─ FWP-HP
 
-Operating States
-├─ NORMAL_100
-├─ NORMAL_75
-├─ NORMAL_50
-└─ COLD / STARTUP
+Native but not command-enabled in this baseline
+├─ FWP-IP  (PompeAlimMP)
+└─ FWP-LP  (PompeAlimBP)
 
-Commands
-├─ START
-├─ STOP
-├─ TRIP
-├─ RESET
-├─ Breaker OPEN/CLOSE
-└─ Valve command
+Explicitly excluded
+├─ Condensate Pump
+└─ CW Pump
 ```
 
-## What is physically active now
+The condensate and CW pumps are excluded because the pinned `CombinedCycle_TripTAC` has no standalone physical pump components for them. Do not synthesize them and do not create placeholder physics or tags.
+
+FWP-IP/LP remain part of the inherited ThermoSysPro HRSG equations, but this v2 baseline does not claim their START/STOP/TRIP/RESET command adapters are implemented.
+
+## Active physical bindings
 
 The v2 builder starts from the pinned ThermoSysPro `CombinedCycle_TripTAC` equations and externalizes only sources that already exist in that plant.
 
-- GT: external exhaust flow and temperature command inputs.
-- ST: inherited native turbine/generator physics.
-- HRSG: inherited HP/MP/BP drum, heat exchanger and controller physics.
-- FWP-HP: `PompeAlimHP` native pump with external RPM command. The separate ECMS HP pump START/STOP/TRIP/RESET/breaker/coast-down state machine is already validated in Windows MATLAB R2025b.
-- FWP-IP: `PompeAlimMP` native pump with external RPM command. ECMS operation state machine is not yet implemented.
-- FWP-LP: `PompeAlimBP` native pump with external RPM command. ECMS operation state machine is not yet implemented.
+- GT: external exhaust flow and temperature process-boundary inputs. The proven `606.94/893.75 -> 150/550` path is DERATING, not Trip.
+- ST: inherited turbine/generator physics. `stTripCmd` closes the native HP/MP turbine admission commands as secondary shutdown physics.
+- HRSG: inherited HP/MP/BP drum, heat-exchanger and controller physics.
+- FWP-HP: native `PompeAlimHP` with external RPM input. `FWP_HP_RUN/STOP/TRIP/RESET`, VCB-A01 behavior and motor coast-down are owned and validated by the R&D ECMS pump state machine.
 
-All three existing feedwater-pump speed sources start at the model-native 1400 rpm.
-
-## What is deliberately not faked
-
-The current pinned `CombinedCycle_TripTAC` has only the HP/MP/BP feedwater centrifugal pumps. A dedicated condensate pump and circulating-water pump are not present in the current plant model. Their v2 module slots are reserved, but they remain disabled until real physical components and circuits are added.
-
-Likewise `NORMAL_75`, `NORMAL_50`, and `COLD_START` are state-registry slots, not guessed initial conditions. They require a physically defined operating point/startup sequence and a consistent full-state capture.
-
-## NORMAL_100 behavior
-
-`NORMAL_100` is the existing normal-hold baseline:
+## NORMAL_100
 
 ```text
 GT exhaust flow        606.94 kg/s
 GT exhaust temperature 893.75 K
-FWP HP/IP/LP speed     1400 rpm
-no command             -> hold normal operation
+FWP-HP speed           1400 rpm
+No command             hold normal operation
+Physics exchange       0.1 s
+Logic step             0.001 s
 ```
 
-The Windows normal-hold state is currently installed as:
+A normal operating state must be warmed to 300 s and then used as the initialization source for the 300-1000 s validation interval. Restart uses solved-state initialization rather than a new cold start.
+
+The Windows normal-hold state currently used by the R&D environment is:
 
 ```text
 C:/TripLensWarm/normal_hold_res.mat
 ```
 
-No automatic GT trip is scheduled in this baseline.
+No scheduled Trip is allowed in NORMAL_100.
 
-## Command boundary
-
-Plant Model v2 separates discrete equipment commands from continuous physical inputs.
+## FWP-HP command contract
 
 ```text
-ECMS / command layer
-START STOP TRIP RESET BREAKER_OPEN BREAKER_CLOSE
-       ↓
-validated equipment state machine
-       ↓
-motor / breaker / valve physical command
-       ↓
-TripLens_Plant_V2_CoSim
-       ↓
-ThermoSysPro response
+START
+FWP_HP_RUN 0->1
+ -> permissive
+ -> breaker already closed
+ -> motor acceleration
+ -> RPM rise
+ -> RUNNING
+
+STOP
+FWP_HP_RUN 1->0
+ -> run disable
+ -> VCB-A01 remains CLOSED
+ -> RPM coast-down
+
+TRIP
+FWP_HP_TRIP=1
+ -> trip latch
+ -> VCB-A01 OPEN
+ -> motor torque removed
+ -> RPM coast-down
+ -> thermo_speed_input_rpm -> fwpHpSpeedCmd
+
+RESET
+cause clear + run off + zero speed + breaker open
+ -> clear latch only
+ -> no reclose and no restart
 ```
 
-For FWP-HP this translation already exists in `ecms_pump_logic/build_fwp_hp_operation.m`.
-For FWP-IP/LP the physical RPM ports exist in v2 but the command state machines must still be built and validated.
+FWP-HP motor/breaker timing constants are virtual-model R&D settings until approved plant/OEM values are supplied.
 
-`VALVE_POSITION` is a reserved command type. It must not be wired to an arbitrary valve until the target valve and ownership/control mode are explicitly defined.
+## Multi-rate contract
 
-## Build
+- ThermoSysPro physics exchange: `0.1 s`.
+- ECMS/logic: `0.001 s`.
+- Alarm persistence must use elapsed simulation time: `current_time - threshold_crossing_time`.
+- Sample-count delay logic is prohibited.
 
-After preparing the pinned ThermoSysPro source at `legacy_exact/vendor/ThermoSysPro`:
+## Repository boundary
 
-```bash
-python3 plant_v2/scripts/build_plant_v2_cosim.py
-```
+R&D repository responsibilities:
 
-Generated class:
+- ThermoSysPro/FMUs and solved-state initialization
+- MATLAB/Simulink ECMS state machines
+- actuator and physical-response validation
+- Plant Model v2 contracts
 
-```text
-plant_v2/build/TripLens_Plant_V2_CoSim.mo
-```
+Competition RAW-only repository responsibilities:
 
-The generated model exposes these current physical inputs:
+- consume validated model/adapter outputs
+- RAW -> ProcessBus -> DCS1/DCS2/ECMS
+- Alarm Console and Blind Analysis input preparation
 
-```text
-gtExhaustFlowCmd
-gtExhaustTemperatureCmd
-fwpHpSpeedCmd
-fwpIpSpeedCmd
-fwpLpSpeedCmd
-```
+MATLAB/Simulink validation code must not be copied into the Competition repository.
 
-and physical feedback including ST power, three drum levels/pressures, three applied pump speeds, and three native feedwater-pump mass flows.
+## Completion gates for this baseline
 
-## Completion gates
+1. NORMAL_100 warm-state simulation succeeds and major variables remain finite.
+2. FWP-HP Trip opens VCB-A01 in the ECMS state machine.
+3. FWP-HP coast-down RPM is delivered to the native `PompeAlimHP` input and produces a finite ThermoSysPro response.
+4. GT Trip remains breaker-based (`52GT.CLOSED=0`); GT 150/550 remains DERATING.
+5. No CW or condensate-pump physics/tag is introduced.
+6. Blind RAW contains no scenario answer label.
 
-Plant Model v2 is not called fully complete until all of the following are true:
-
-1. NORMAL_100 no-command regression remains stable.
-2. FWP-HP discrete commands drive the external HP pump speed port and native process response.
-3. FWP-IP and FWP-LP receive equivalent validated state machines.
-4. Condensate and CW pump physical circuits are explicitly added and validated.
-5. NORMAL_75 and NORMAL_50 full-state snapshots are captured from physically defined steady operating points.
-6. COLD/STARTUP has a startup sequence and consistent state model; it is not a zero-value preset.
-7. Breaker OPEN/CLOSE remains separate from START/STOP.
-8. Valve commands are bound only to named validated valves.
-9. No-command operation changes nothing by itself.
-10. Blind-test raw physics contains no scenario answer labels.
-
-## Branch policy
-
-Development is on `plant-model-v2`. Do not merge into `main` until the contract workflow passes and the current main branch is re-compared for concurrent changes.
+FWP-IP/LP command integration, additional operating points and startup states are later R&D extensions and are not blockers for the v2 competition baseline.
