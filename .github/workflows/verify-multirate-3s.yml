@@ -1,0 +1,41 @@
+name: Verify 3s Multirate Protection
+
+on:
+  push:
+    branches: [codex/3s-multirate-verify-20260909]
+    paths:
+      - 'matlab/verify_multirate_3s.m'
+      - '.github/workflows/verify-multirate-3s.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-3s-multirate-protection
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run 3 second 100 ms to 1 ms timing verification
+        shell: cmd
+        run: |
+          "C:\Program Files\MATLAB\R2025b\bin\matlab.exe" -batch "addpath(fullfile(getenv('GITHUB_WORKSPACE'),'ecms_logic')); build_a_logic_core; addpath(fullfile(getenv('GITHUB_WORKSPACE'),'matlab')); verify_multirate_3s"
+
+      - name: Upload timing evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: triplens-multirate-3s-${{ github.run_number }}
+          path: |
+            outputs/multirate_3s_report.json
+            outputs/multirate_3s_timeline.csv
+            outputs/multirate_3s_physical_samples.csv
+            outputs/ecms_a_logic_core_report.json
+          if-no-files-found: warn
+          retention-days: 30
