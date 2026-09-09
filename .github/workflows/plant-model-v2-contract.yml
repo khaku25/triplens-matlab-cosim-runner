@@ -2,7 +2,7 @@ name: Plant Model v2 Contract
 
 on:
   push:
-    branches: [plant-model-v2]
+    branches: [integration/validated-stack-20260909]
     paths:
       - 'plant_v2/**'
       - '.github/workflows/plant-model-v2-contract.yml'
@@ -28,7 +28,7 @@ jobs:
           git -C legacy_exact/vendor/ThermoSysPro checkout --detach db81ae1b5a6a85f6c6c7693244cafa6087e18ff5
           test "$(git -C legacy_exact/vendor/ThermoSysPro rev-parse HEAD)" = "db81ae1b5a6a85f6c6c7693244cafa6087e18ff5"
 
-      - name: Build v2 Modelica class
+      - name: Build integrated v2 Modelica class
         shell: bash
         run: |
           set -euo pipefail
