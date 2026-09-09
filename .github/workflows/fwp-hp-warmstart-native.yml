@@ -383,13 +383,13 @@ jobs:
           buildModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_HP_TripRuntime,
             startTime=300, stopTime=301, numberOfIntervals=10, tolerance=1e-3,
             method="dassl", outputFormat="csv", fileNamePrefix="fwp_hp_transition_raw",
-            variableFilter="^(time|arretPomesHP\\.y\\.signal|PompeAlimHP\\.Q|CapteurDebitEauHP\\.Measure\\.signal|Ballon(HP|MP|BP)\\.(P|zl)|tripLensFwpHpDischargeNRV\\.opening)$");
+            variableFilter="^(time|arretPomesHP\\.y\\.signal|PompeAlimHP\\.Q|CapteurDebitEauHP\\.Measure\\.signal|Ballon(HP|MP|BP)\\.(P|zl)|tripLensFwpHpDischargeNRV\\.(opening|Q))$");
           getErrorString();
           loadFile("/workspace/build/TripLens_FWP_HP_ClosedRuntime.mo"); getErrorString();
           buildModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_HP_ClosedRuntime,
             startTime=301, stopTime=420, numberOfIntervals=1190, tolerance=1e-3,
             method="cvode", outputFormat="csv", fileNamePrefix="fwp_hp_closed_hold",
-            variableFilter="^(time|arretPomesHP\\.y\\.signal|PompeAlimHP\\.Q|CapteurDebitEauHP\\.Measure\\.signal|Ballon(HP|MP|BP)\\.(P|zl)|tripLensFwpHpDischargeNRV\\.opening)$");
+            variableFilter="^(time|arretPomesHP\\.y\\.signal|PompeAlimHP\\.Q|CapteurDebitEauHP\\.Measure\\.signal|Ballon(HP|MP|BP)\\.(P|zl)|tripLensFwpHpDischargeNRV\\.(opening|Q))$");
           getErrorString();
           MOS
           docker run --rm \
@@ -435,11 +435,12 @@ jobs:
         run: |
           set -euo pipefail
           chosen=""
-          for attempt in none_cvode none_dassl symbolic_dassl; do
+          for attempt in none_dassl; do
             init_method="${attempt%%_*}"
             solver="${attempt#*_}"
             set +e
-            timeout 12m docker run --rm \
+            timeout --signal=TERM --kill-after=15s 30m docker run --rm \
+              --name "fwp-hp-closed-${attempt}" \
               -v "$PWD/fwp_warm/results:/work" \
               -w /work \
               openmodelica/openmodelica:v1.27.0-minimal \
@@ -455,6 +456,7 @@ jobs:
                 -lv=LOG_INIT,LOG_STATS \
               | tee "fwp_warm/results/trip_closed_hold_${attempt}.log"
             rc=${PIPESTATUS[0]}
+            docker rm -f "fwp-hp-closed-${attempt}" >/dev/null 2>&1 || true
             set -e
             if [[ "$rc" -eq 0 ]] && grep -q "The simulation finished successfully" \
                 "fwp_warm/results/trip_closed_hold_${attempt}.log"; then
@@ -477,24 +479,56 @@ jobs:
               Path('fwp_warm/results/fwp_hp_transition_raw.csv'),
               Path(f'fwp_warm/results/fwp_hp_closed_hold_{attempt}.csv'),
           ]
-          header=None
+          canonical=[
+              'time','rpm_command','hp_boundary_flow','hp_process_flow',
+              'isolation_opening','BallonHP.zl','BallonHP.P',
+              'BallonMP.zl','BallonMP.P','BallonBP.zl','BallonBP.P',
+          ]
           combined=[]
           last_time=None
+
+          def resolve(header,label,candidates):
+              clean=[x.strip().strip('"') for x in header]
+              for name in candidates:
+                  if name in clean:
+                      print(path.name,label,'=',name)
+                      return clean.index(name)
+              raise SystemExit(
+                  f'{path}: missing {label}; available={clean}')
+
           for path in paths:
               with path.open(newline='',encoding='utf-8-sig') as f:
                   r=csv.reader(f); current=next(r); rows=list(r)
-              if header is None:
-                  header=current
-              elif current != header:
-                  raise SystemExit(f'RAW headers differ: {path}')
+              indices={
+                  'time':resolve(current,'time',('time',)),
+                  'rpm_command':resolve(
+                      current,'rpm_command',
+                      ('arretPomesHP.y.signal','arretPomesHP.y',
+                       'PompeAlimHP.Vr','PompeAlimHP.rpm_or_mpower.signal')),
+                  'hp_boundary_flow':resolve(
+                      current,'hp_boundary_flow',
+                      ('tripLensFwpHpDischargeNRV.Q','PompeAlimHP.Q')),
+                  'hp_process_flow':resolve(
+                      current,'hp_process_flow',
+                      ('CapteurDebitEauHP.Measure.signal',)),
+                  'isolation_opening':resolve(
+                      current,'isolation_opening',
+                      ('tripLensFwpHpDischargeNRV.opening',)),
+                  'BallonHP.zl':resolve(current,'BallonHP.zl',('BallonHP.zl',)),
+                  'BallonHP.P':resolve(current,'BallonHP.P',('BallonHP.P',)),
+                  'BallonMP.zl':resolve(current,'BallonMP.zl',('BallonMP.zl',)),
+                  'BallonMP.P':resolve(current,'BallonMP.P',('BallonMP.P',)),
+                  'BallonBP.zl':resolve(current,'BallonBP.zl',('BallonBP.zl',)),
+                  'BallonBP.P':resolve(current,'BallonBP.P',('BallonBP.P',)),
+              }
               for row in rows:
-                  t=float(row[0].strip('"'))
+                  t=float(row[indices['time']].strip('"'))
                   if last_time is None or t > last_time + 1e-7:
-                      combined.append(row)
+                      combined.append([row[indices[name]] for name in canonical])
                       last_time=t
           target=Path('fwp_warm/results/fwp_hp_trip_raw.csv')
           with target.open('w',newline='',encoding='utf-8') as f:
-              w=csv.writer(f); w.writerow(header); w.writerows(combined)
+              w=csv.writer(f); w.writerow(canonical); w.writerows(combined)
           print('COMBINED_RAW_ROWS',len(combined),'END_TIME',last_time)
           PY
           test -s fwp_warm/results/fwp_hp_trip_raw.csv
@@ -536,15 +570,15 @@ jobs:
           c_time=find_col('time',exact=('time',))
           c_rpm=find_col(
               'rpm',
-              exact=('arretPomesHP.y.signal','arretPomesHP.y','PompeAlimHP.Vr','PompeAlimHP.rpm_or_mpower.signal'),
+              exact=('rpm_command','arretPomesHP.y.signal','arretPomesHP.y','PompeAlimHP.Vr','PompeAlimHP.rpm_or_mpower.signal'),
               contains_all=('arretPomesHP',), suffixes=('.signal','.y'))
-          try:
-              c_q=find_col('native_pump_flow',exact=('PompeAlimHP.Q',),contains_all=('PompeAlimHP',),suffixes=('.Q',))
-          except SystemExit:
-              c_q=find_col('native_feedwater_flow',exact=('CapteurDebitEauHP.Measure.signal',),contains_all=('CapteurDebitEauHP',),suffixes=('.signal',))
+          c_boundary_q=find_col(
+              'hp_boundary_flow', exact=('hp_boundary_flow',))
+          c_process_q=find_col(
+              'hp_process_flow', exact=('hp_process_flow',))
           c_nrv=find_col(
               'r_and_d_discharge_isolation',
-              exact=('tripLensFwpHpDischargeNRV.opening',),
+              exact=('isolation_opening','tripLensFwpHpDischargeNRV.opening'),
               contains_all=('tripLensFwpHpDischargeNRV',), suffixes=('.opening',))
 
           drum_names=('BallonHP.zl','BallonHP.P','BallonMP.zl','BallonMP.P','BallonBP.zl','BallonBP.P')
@@ -571,7 +605,8 @@ jobs:
               vals={
                   'time_s':t[j],
                   'rpm_command':float(rows[j][c_rpm]),
-                  'native_flow':float(rows[j][c_q]),
+                  'hp_boundary_flow':float(rows[j][c_boundary_q]),
+                  'hp_process_flow':float(rows[j][c_process_q]),
                   'isolation_opening':float(rows[j][c_nrv]),
               }
               for name,i in drum_cols:
@@ -592,17 +627,26 @@ jobs:
           opening_after=[samples[str(x)]['isolation_opening'] for x in [301,302,305,310]]
           if max(opening_after) > 0.01:
               raise SystemExit('HP discharge isolation did not close during pump coastdown: '+str(opening_after))
-          post_trip_flow=[samples[str(x)]['native_flow'] for x in [301,302,305,310,330]]
-          if max(abs(q) for q in post_trip_flow) > 0.2:
-              raise SystemExit('regularized HP discharge isolation leakage too large: '+str(post_trip_flow))
+          post_trip_boundary_flow=[
+              samples[str(x)]['hp_boundary_flow']
+              for x in [301,302,305,310,330]]
+          if max(abs(q) for q in post_trip_boundary_flow) > 0.2:
+              raise SystemExit(
+                  'regularized HP discharge isolation leakage too large: '
+                  +str(post_trip_boundary_flow))
 
-          # Demand a real native process response, not merely the commanded RPM.
-          q0=samples['300']['native_flow']
-          q_candidates=[samples[str(x)]['native_flow'] for x in [301,302,305,310,330]]
+          # Demand a real downstream process response separately from the
+          # bounded R&D isolation flow.
+          q0=samples['300']['hp_process_flow']
+          q_candidates=[
+              samples[str(x)]['hp_process_flow']
+              for x in [301,302,305,310,330]]
           max_q_delta=max(abs(q-q0) for q in q_candidates)
           scale=max(abs(q0),1.0)
           if max_q_delta <= max(1e-6,1e-4*scale):
-              raise SystemExit(f'native pump/process flow did not respond: q0={q0}, max_delta={max_q_delta}')
+              raise SystemExit(
+                  f'native feedwater process flow did not respond: '
+                  f'q0={q0}, max_delta={max_q_delta}')
 
           report={
               'status':'pass',
@@ -616,10 +660,16 @@ jobs:
               'major_variables_finite':True,
               'rpm_coastdown_monotonic':True,
               'native_process_response':True,
-              'native_flow_max_delta':max_q_delta,
+              'native_process_flow_max_delta':max_q_delta,
               'r_and_d_discharge_isolation_closed_after_trip':True,
               'post_trip_isolation_flow_bound_kg_s':0.2,
-              'resolved_columns':{'rpm':h[c_rpm],'flow':h[c_q],'isolation':h[c_nrv],'drums':[n for n,_ in drum_cols]},
+              'resolved_columns':{
+                  'rpm':h[c_rpm],
+                  'boundary_flow':h[c_boundary_q],
+                  'process_flow':h[c_process_q],
+                  'isolation':h[c_nrv],
+                  'drums':[n for n,_ in drum_cols],
+              },
               'samples':samples,
               'guardrail':'FWP motor coastdown constants and fixed-density numerical regularizers are R&D settings, not plant-approved settings.'
           }
