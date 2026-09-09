@@ -265,6 +265,7 @@ jobs:
               'r_and_d_hp_valve_regularized':True,
               'post_transition_fixed_closed_topology':False,
               'single_continuous_runtime_topology':True,
+              'checkpoint_state_output_intervals':10,
               'post_transition_numerical_leak_kg_s':-5e-4,
               'hp_valve_fixed_density_kg_m3':926.1664940825133,
               'r_and_d_discharge_isolation':'TripLensFwpHpRegularizedNRV between PompeAlimHP and Vanne_alimentationMPHP1; speed-coupled continuous resistance, no field/Competition tag',
@@ -327,7 +328,7 @@ jobs:
           loadFile("/workspace/build/TripLens_FWP_HP_TripRuntime.mo"); getErrorString();
           cd("/workspace/results");
           buildModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_HP_TripRuntime,
-            startTime=300, stopTime=301, numberOfIntervals=1, tolerance=1e-3,
+            startTime=300, stopTime=301, numberOfIntervals=10, tolerance=1e-3,
             method="dassl", outputFormat="mat", fileNamePrefix="fwp_hp_transition_state",
             variableFilter=".*");
           getErrorString();
