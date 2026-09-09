@@ -1,22 +1,33 @@
 signal_name,direction,data_type,source_layer,role,status,bound_tag,notes
-gt_trip_cmd,IN,boolean,ECMS_COMMAND,GT Trip episode input,PROVISIONAL_BINDING,,Later bind to Tag Master command tag
+gt_trip_cmd,IN,boolean,ECMS_COMMAND,Direct GT Trip command input,PROVISIONAL_BINDING,,Common matrix: GT and ST trip request
+st_trip_cmd,IN,boolean,ECMS_COMMAND,Direct ST Trip command input,PROVISIONAL_BINDING,,Common matrix: ST trip request only
+hp_drum_level_hh,IN,boolean,LAYER1_ALARM,HP Drum HH first-order alarm,MODEL_LOGIC_BINDING,HRSG.HP.DRUM.LEVEL.HH,Trips ST only
+hp_drum_level_ll,IN,boolean,LAYER1_ALARM,HP Drum LL first-order alarm,MODEL_LOGIC_BINDING,HRSG.HP.DRUM.LEVEL.LL,Trips GT and ST
+ip_drum_level_hh,IN,boolean,LAYER1_ALARM,IP Drum HH first-order alarm,MODEL_LOGIC_BINDING,HRSG.IP.DRUM.LEVEL.HH,Trips ST only
+ip_drum_level_ll,IN,boolean,LAYER1_ALARM,IP Drum LL first-order alarm,MODEL_LOGIC_BINDING,HRSG.IP.DRUM.LEVEL.LL,Trips GT and ST
+lp_drum_level_hh,IN,boolean,LAYER1_ALARM,LP Drum HH first-order alarm,MODEL_LOGIC_BINDING,HRSG.LP.DRUM.LEVEL.HH,Trips ST only
+lp_drum_level_ll,IN,boolean,LAYER1_ALARM,LP Drum LL first-order alarm,MODEL_LOGIC_BINDING,HRSG.LP.DRUM.LEVEL.LL,Trips GT and ST
 relay_86gt_healthy,IN,boolean,PROTECTION_FEEDBACK,Protection healthy permissive,PROVISIONAL_BINDING,,No synthetic relay health inside logic core
-cb_52gt_reset_cmd,IN,boolean,ECMS_COMMAND,86GT and breaker trip latch reset,PROVISIONAL_BINDING,,Reset policy to be refined with approved C&E
-cb_52gt_closed_fb,IN,boolean,ELECTRICAL_TWIN,52GT position feedback,PROVISIONAL_BINDING,,Reserved for fail-to-open logic after setting validation
+cb_52gt_reset_cmd,IN,boolean,ECMS_COMMAND,86GT and GT breaker trip latch reset,PROVISIONAL_BINDING,,Reset policy to be refined with approved C&E
+cb_52gt_closed_fb,IN,boolean,ELECTRICAL_TWIN,52GT position feedback,PROVISIONAL_BINDING,,GT breaker physical/electrical state
+cb_52st_reset_cmd,IN,boolean,ECMS_COMMAND,ST breaker trip latch reset,PROVISIONAL_BINDING,,Reset policy to be refined with approved C&E
+cb_52st_closed_fb,IN,boolean,ELECTRICAL_TWIN,52ST position feedback,PROVISIONAL_BINDING,,ST breaker physical/electrical state
 bus_a_voltage_kv,IN,double,ELECTRICAL_TWIN,BUS-A solved voltage input in kV,PROVISIONAL_BINDING,,Must come from electrical physics; never synthesized here
 bus_b_voltage_kv,IN,double,ELECTRICAL_TWIN,BUS-B solved voltage input in kV,PROVISIONAL_BINDING,,Must come from electrical physics; never synthesized here
 bus_a_native_live,IN,boolean,ELECTRICAL_TWIN,BUS-A native source available,PROVISIONAL_BINDING,,Topology/energization feedback
 bus_b_native_live,IN,boolean,ELECTRICAL_TWIN,BUS-B native source available,PROVISIONAL_BINDING,,Topology/energization feedback
 bus_a_fault_active,IN,boolean,ELECTRICAL_TWIN,BUS-A fault active,PROVISIONAL_BINDING,,Fault state comes from electrical twin/scenario source
 bus_b_fault_active,IN,boolean,ELECTRICAL_TWIN,BUS-B fault active,PROVISIONAL_BINDING,,Fault state comes from electrical twin/scenario source
-stg_power_mw,IN,double,THERMO_OR_ELECTRICAL_TWIN,ST active power input in MW,PROVISIONAL_BINDING,,Physical power feedback only
+stg_power_mw,IN,double,THERMO_OR_ELECTRICAL_TWIN,ST active power input in MW,PROVISIONAL_BINDING,,Physical power feedback only; not a trip source in common matrix
 auto_bus_tie_enable,IN,boolean,ECMS_SETTING,Enable automatic bus tie transfer,PROVISIONAL_BINDING,,Default 0 from A settings
 allow_source_parallel,IN,boolean,ECMS_SETTING,Source parallel permission,PROVISIONAL_BINDING,,Default 0 until synchronism logic exists
-relay_86gt_trip_received,OUT,boolean,PROTECTION_CONTROL,GT trip receive state after delay,MIGRATED_V1,,Mirrors A-program timing logic
-relay_86gt_operated,OUT,boolean,PROTECTION_CONTROL,86GT lockout latch,MIGRATED_V1,,Latched per trip episode; reset input clears output
-cb_52gt_trip_cmd,OUT,boolean,PROTECTION_CONTROL,52GT trip command latch,MIGRATED_V1,,Timing mirrors A-program GT breaker trip schedule
+gt_trip_request,OUT,boolean,COMMON_PROTECTION,Resolved GT Trip request,MIGRATED_V2,,GT command or any drum LL
+st_trip_request,OUT,boolean,COMMON_PROTECTION,Resolved ST Trip request,MIGRATED_V2,,ST command or GT command or any drum HH/LL
+relay_86gt_trip_received,OUT,boolean,PROTECTION_CONTROL,GT trip receive state after delay,MIGRATED_V1,,Driven by resolved gt_trip_request
+relay_86gt_operated,OUT,boolean,PROTECTION_CONTROL,86GT lockout latch,MIGRATED_V1,,Latched per GT trip request; reset clears output
+cb_52gt_trip_cmd,OUT,boolean,PROTECTION_CONTROL,52GT trip command latch,MIGRATED_V1,,Driven by resolved gt_trip_request
+cb_52st_trip_cmd,OUT,boolean,PROTECTION_CONTROL,52ST trip command latch,MIGRATED_V2,,Driven by resolved st_trip_request
 bus_a_27uv_operate,OUT,boolean,PROTECTION_CONTROL,BUS-A undervoltage operate,MIGRATED_V1,,Driven only by bus_a_voltage_kv input
 bus_b_27uv_operate,OUT,boolean,PROTECTION_CONTROL,BUS-B undervoltage operate,MIGRATED_V1,,Driven only by bus_b_voltage_kv input
 cb_tie_ab_auto_close_permissive,OUT,boolean,PROTECTION_CONTROL,Auto tie close permissive,MIGRATED_V1_DISABLED,,Enable input defaults false; no direct breaker actuation in v1
-stg_low_state,OUT,boolean,PROTECTION_CONTROL,ST low-power VPP state,MIGRATED_V1,,State indication only; no automatic 52ST trip in v1
-
+stg_low_state,OUT,boolean,PROTECTION_CONTROL,ST low-power VPP state,MIGRATED_V1,,State indication only; never initiates ST Trip
