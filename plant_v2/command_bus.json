@@ -1,0 +1,76 @@
+{
+  "schema_version": "1.0",
+  "command_bus": {
+    "discrete": {
+      "START": {
+        "requires_target": true,
+        "semantics": "request equipment start after permissives; never closes breaker implicitly"
+      },
+      "STOP": {
+        "requires_target": true,
+        "semantics": "normal stop; remove run enable; breaker remains in its existing state unless separate logic says otherwise"
+      },
+      "TRIP": {
+        "requires_target": true,
+        "semantics": "trip latch; remove run enable/motor torque; associated breaker trip is handled by validated ECMS logic"
+      },
+      "RESET": {
+        "requires_target": true,
+        "semantics": "clear latched trip only when reset permissives pass; no automatic restart or breaker close"
+      },
+      "BREAKER_OPEN": {
+        "requires_target": true,
+        "semantics": "explicit breaker open command"
+      },
+      "BREAKER_CLOSE": {
+        "requires_target": true,
+        "semantics": "explicit breaker close command; independent of START"
+      }
+    },
+    "analog": {
+      "VALVE_POSITION": {
+        "requires_target": true,
+        "unit": "pu",
+        "valid_range": [0.0, 1.0],
+        "status": "reserved_until_named_valve_binding_exists"
+      }
+    }
+  },
+  "equipment": {
+    "FWP_HP": {
+      "physics_input": "fwpHpSpeedCmd",
+      "rated_speed_rpm": 1400.0,
+      "operation_adapter": "ecms_pump_logic/build_fwp_hp_operation.m",
+      "status": "active"
+    },
+    "FWP_IP": {
+      "physics_input": "fwpIpSpeedCmd",
+      "rated_speed_rpm": 1400.0,
+      "operation_adapter": null,
+      "status": "physics_port_active_command_adapter_pending"
+    },
+    "FWP_LP": {
+      "physics_input": "fwpLpSpeedCmd",
+      "rated_speed_rpm": 1400.0,
+      "operation_adapter": null,
+      "status": "physics_port_active_command_adapter_pending"
+    },
+    "CONDENSATE_PUMP": {
+      "physics_input": null,
+      "status": "physical_component_pending"
+    },
+    "CW_PUMP": {
+      "physics_input": null,
+      "status": "physical_component_pending"
+    }
+  },
+  "event_record_fields": [
+    "time_s",
+    "target",
+    "command",
+    "value",
+    "source",
+    "request_id"
+  ],
+  "blind_policy": "command records may contain actual user/logic commands but must not contain expected root-cause or answer labels"
+}
