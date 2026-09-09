@@ -1,0 +1,35 @@
+{
+  "schema_version": "1.0",
+  "state_root_windows": "C:/TripLensStates",
+  "states": {
+    "NORMAL_100": {
+      "status": "active",
+      "source_model": "TripLens_CombinedCycle_NormalHold",
+      "current_legacy_state": "C:/TripLensWarm/normal_hold_res.mat",
+      "target_state": "C:/TripLensStates/NORMAL_100/state.mat",
+      "load_fraction": 1.0,
+      "capture_policy": "full-state MAT; include protected variables; no scheduled trip"
+    },
+    "NORMAL_75": {
+      "status": "pending",
+      "target_state": "C:/TripLensStates/NORMAL_75/state.mat",
+      "load_fraction": 0.75,
+      "capture_policy": "capture only after a physically defined and converged 75% operating point exists",
+      "do_not_guess": true
+    },
+    "NORMAL_50": {
+      "status": "pending",
+      "target_state": "C:/TripLensStates/NORMAL_50/state.mat",
+      "load_fraction": 0.5,
+      "capture_policy": "capture only after a physically defined and converged 50% operating point exists",
+      "do_not_guess": true
+    },
+    "COLD_START": {
+      "status": "pending_startup_sequence",
+      "target_state": "C:/TripLensStates/COLD_START/state.mat",
+      "capture_policy": "requires thermodynamically consistent cold plant state plus startup sequence",
+      "do_not_guess": true,
+      "forbidden_shortcut": "forcing pressure, temperature, flow and rpm to zero"
+    }
+  }
+}
