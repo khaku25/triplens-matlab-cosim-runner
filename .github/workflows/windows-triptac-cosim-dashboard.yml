@@ -1,11 +1,11 @@
-name: Windows TripTAC Co-Sim Dashboard
+name: Windows TripTAC Co-Sim Dashboard (Legacy Manual)
 
+# The automatic path is now .github/workflows/closed-loop-trip-cosim.yml,
+# triggered by each successful Build TripTAC Co-Sim FMU run. This legacy
+# dashboard workflow is retained only for manual historical reproduction of the
+# old two-input artifact and must not run automatically against the new 3-input
+# physical ST-trip contract.
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'matlab/build_triptac_cosim_dashboard.m'
-      - '.github/workflows/windows-triptac-cosim-dashboard.yml'
   workflow_dispatch:
 
 permissions:
@@ -13,40 +13,15 @@ permissions:
   actions: read
 
 jobs:
-  windows-cosim-dashboard:
+  legacy-windows-cosim-dashboard:
     runs-on: [self-hosted, Windows, X64]
     timeout-minutes: 120
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Download validated TripTAC Co-Simulation FMU
-        uses: actions/download-artifact@v4
-        with:
-          name: triplens-triptac-cosim-fmu-4
-          path: fmu_artifact
-          repository: khaku25/triplens-matlab-cosim-runner
-          run-id: 34199738020
-          github-token: ${{ github.token }}
-
-      - name: Show downloaded FMU payload
+      - name: Stop with migration guidance
         shell: cmd
         run: |
-          dir /s /b fmu_artifact
-          dir /s /b "fmu_artifact\*.fmu" >nul || exit /b 1
-
-      - name: Build ECMS dashboard and run real Simulink-FMU smoke
-        shell: cmd
-        run: |
-          "C:\Program Files\MATLAB\R2025b\bin\matlab.exe" -batch "addpath(fullfile(getenv('GITHUB_WORKSPACE'),'matlab')); build_triptac_cosim_dashboard"
-
-      - name: Upload co-simulation proof and dashboard model
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: triptac-windows-cosim-dashboard-${{ github.run_number }}
-          path: |
-            outputs/triptac_cosim_dashboard_report.json
-            outputs/TripLens_ECMS_DigitalTwin.slx
-          if-no-files-found: warn
-          retention-days: 30
+          echo This legacy workflow used a pinned 2-input FMU artifact.
+          echo Use the Closed Loop ECMS Thermo Trip workflow for the current 3-input physical trip path.
