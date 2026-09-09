@@ -66,21 +66,46 @@ jobs:
           txt,n=pat.subn(repl,txt,count=1)
           if n!=1: raise SystemExit(f'HP speed source replacement count={n}')
 
-          # The native static pump changes its enthalpy transport equation at
-          # zero flow. Enable its built-in Qeps smoothing for the HP pump only;
-          # this adds no component and does not change the hydraulic topology.
+          # StaticCentrifugalPump is valid only while its positive-quadrant
+          # head curve intersects the live HP header. At about 1288 rpm the
+          # warm plant loses that algebraic operating point before Q reaches 0.
+          # Upgrade only the existing PompeAlimHP instance to ThermoSysPro's
+          # equivalent CentrifugalPump formulation: mode_car=2 preserves the
+          # same a1/a3 and b1/b2 curves in the normal quadrant while supporting
+          # the off-design/reverse quadrant needed to reach NRV closure.
           pump_pat=re.compile(
-              r'(ThermoSysPro\.WaterSteam\.Machines\.StaticCentrifugalPump\s+PompeAlimHP\(\s*)')
-          txt,n=pump_pat.subn(
-              r'\1continuous_flow_reversal=true,\n    ',
-              txt,
-              count=1)
-          if n!=1: raise SystemExit(f'HP native flow-regularization count={n}')
+              r'ThermoSysPro\.WaterSteam\.Machines\.StaticCentrifugalPump\s+PompeAlimHP\(.*?\)\s*'
+              r'annotation\s*\(Placement\(transformation\(extent=\{\{771,-60\},\{791,-40\}\},\s*rotation=0\)\)\);',
+              re.S)
+          pump_repl=(
+              'ThermoSysPro.WaterSteam.Machines.CentrifugalPump PompeAlimHP(\n'
+              '    N=1400,\n'
+              '    N_nom=1400,\n'
+              '    mode_car=2,\n'
+              '    mode_car_hn=2,\n'
+              '    mode_car_Cr=2,\n'
+              '    hn_coef={-28056.2,1600},\n'
+              '    rh_coef={-12.7952660447433,3.61},\n'
+              '    dynamic_mech_equation=false,\n'
+              '    dynamic_energy_balance=false,\n'
+              '    continuous_flow_reversal=true,\n'
+              '    Q(fixed=false),\n'
+              '    mode=1,\n'
+              '    C1(h_vol(start=561000.0)),\n'
+              '    C2(h_vol(start=630000.0)),\n'
+              '    Qv(start=0.0810383142105344),\n'
+              '    pro(d(start=929.0)),\n'
+              '    Pm(start=6774000))\n'
+              '    annotation (Placement(transformation(extent={{771,-60},{791,-40}}, rotation=0)));')
+          txt,n=pump_pat.subn(pump_repl,txt,count=1)
+          if n!=1: raise SystemExit(f'HP off-design pump upgrade count={n}')
 
-          # CombinedCycle_TripTAC has no HP-pump discharge non-return isolation.
-          # ThermoSysPro's own StaticCentrifugalPump example uses this native
-          # IdealCheckValve boundary. It stays R&D-only and creates no plant tag.
+          # The native shaft-speed boundary lets the validated external R&D
+          # motor state continue to own RPM; no second motor is inserted.
+          # The native IdealCheckValve supplies passive discharge isolation.
           declaration=(
+              '  ThermoSysPro.ElectroMechanics.BoundaryConditions.SourceAngularVelocity\n'
+              '    tripLensFwpHpShaftSpeed;\n'
               '  ThermoSysPro.WaterSteam.PressureLosses.IdealCheckValve\n'
               '    tripLensFwpHpDischargeNRV(\n'
               '      dPOuvert=0.01,\n'
@@ -88,7 +113,7 @@ jobs:
               '      continuous_flow_reversal=true)\n'
               '    "R&D generic HP FWP discharge isolation; not a Competition tag";\n')
           txt,n=re.subn(r'^equation\s*$', declaration+'equation', txt, count=1, flags=re.M)
-          if n!=1: raise SystemExit(f'HP discharge NRV declaration count={n}')
+          if n!=1: raise SystemExit(f'HP shaft/NRV declaration count={n}')
 
           old_discharge=(
               '  connect(Vanne_alimentationMPHP1.C1, PompeAlimHP.C2)\n'
@@ -100,8 +125,15 @@ jobs:
               raise SystemExit(f'HP discharge connection count={txt.count(old_discharge)}')
           txt=txt.replace(old_discharge,new_discharge,1)
 
-          if 'connect(PompeAlimHP.rpm_or_mpower, arretPomesHP.y)' not in txt:
-              raise SystemExit('native HP pump speed connection missing')
+          old_speed=(
+              '  connect(PompeAlimHP.rpm_or_mpower, arretPomesHP.y)\n'
+              '    annotation (Line(points={{781,-61},{781,-80},{872.1,-80}}, smooth=Smooth.None));')
+          new_speed=(
+              '  connect(arretPomesHP.y, tripLensFwpHpShaftSpeed.IAngularVelocity);\n'
+              '  connect(tripLensFwpHpShaftSpeed.M, PompeAlimHP.M);')
+          if txt.count(old_speed)!=1:
+              raise SystemExit(f'HP shaft-speed connection count={txt.count(old_speed)}')
+          txt=txt.replace(old_speed,new_speed,1)
           Path('fwp_warm/build/TripLens_FWP_HP_WarmSeeded.mo').write_text(txt,encoding='utf-8')
           Path('fwp_warm/results/contract.json').write_text(json.dumps({
               'base_model':'CombinedCycle_TripTAC',
@@ -110,11 +142,15 @@ jobs:
               'trip_request_s':300.0,
               'breaker_open_reference_s':300.08,
               'pump':'PompeAlimHP',
+              'pump_model':'ThermoSysPro.WaterSteam.Machines.CentrifugalPump',
+              'normal_quadrant_curve_preserved':'mode_car=2 maps original a1/a3 and b1/b2 coefficients exactly',
+              'off_design_domain':'CentrifugalPump semi-parabolic formulation permits the Q=0 crossing required for passive NRV closure',
               'native_topology_modified':True,
               'new_motor_component_inserted':False,
               'native_discharge_check_valve_inserted':True,
+              'native_shaft_speed_boundary_inserted':True,
               'r_and_d_discharge_isolation':'ThermoSysPro IdealCheckValve between PompeAlimHP and Vanne_alimentationMPHP1; generic virtual NRV, no field tag, not plant-approved',
-              'native_numerical_regularization':'PompeAlimHP.continuous_flow_reversal=true; built-in Qeps smoothing only',
+              'native_numerical_regularization':'PompeAlimHP uses ThermoSysPro CentrifugalPump mode_car=2 with the original positive-quadrant coefficients plus continuous flow reversal',
               'gt_boundary':'NORMAL_100 606.94 kg/s / 893.75 K',
               'coastdown_source':'R&D FWP virtual motor surrogate; tau approx 1 s, not plant-approved',
               'initialization':'emit-protected solved snapshot -> dedicated 300-420 CVODE executable with native discharge isolation'
@@ -174,7 +210,7 @@ jobs:
           buildModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_HP_WarmSeeded,
             startTime=300, stopTime=420, numberOfIntervals=1200, tolerance=1e-3,
             method="cvode", outputFormat="csv", fileNamePrefix="fwp_hp_trip_restart",
-            variableFilter="^(time|arretPomesHP\\.y\\.signal|PompeAlimHP\\.Q|CapteurDebitEauHP\\.Measure\\.signal|Ballon(HP|MP|BP)\\.(P|zl)|tripLensFwpHpDischargeNRV\\.ouvert)$");
+            variableFilter="^(time|arretPomesHP\\.y\\.signal|PompeAlimHP\\.(Q|w_rpm)|CapteurDebitEauHP\\.Measure\\.signal|Ballon(HP|MP|BP)\\.(P|zl)|tripLensFwpHpDischargeNRV\\.ouvert)$");
           getErrorString();
           MOS
           docker run --rm \
