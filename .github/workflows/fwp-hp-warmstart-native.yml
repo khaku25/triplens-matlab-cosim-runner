@@ -263,7 +263,8 @@ jobs:
               'native_discharge_check_valve_inserted':False,
               'r_and_d_regularized_isolation_adapter_inserted':True,
               'r_and_d_hp_valve_regularized':True,
-              'post_transition_fixed_closed_topology':True,
+              'post_transition_fixed_closed_topology':False,
+              'single_continuous_runtime_topology':True,
               'post_transition_numerical_leak_kg_s':-5e-4,
               'hp_valve_fixed_density_kg_m3':926.1664940825133,
               'r_and_d_discharge_isolation':'TripLensFwpHpRegularizedNRV between PompeAlimHP and Vanne_alimentationMPHP1; speed-coupled continuous resistance, no field/Competition tag',
@@ -271,7 +272,7 @@ jobs:
               'native_numerical_regularization':'PompeAlimHP and perteChargeK3 continuous_flow_reversal=true; HP valve keeps native Cv law with NORMAL_100 fixed density to avoid invalid IF97 trial states',
               'gt_boundary':'NORMAL_100 606.94 kg/s / 893.75 K',
               'coastdown_source':'R&D FWP virtual motor surrogate; tau approx 1 s, not plant-approved',
-              'initialization':'native 0-300 seed -> regularized 300-301 transition -> fixed-closed 301-420 runtime'
+              'initialization':'native 0-300 seed -> regularized continuous 300-420 runtime; no t=301 topology switch'
           },indent=2),encoding='utf-8')
           print('FWP_HP_WARM_MODEL_BUILD_PASS')
           PY
@@ -315,7 +316,7 @@ jobs:
           test -s fwp_warm/results/fwp_hp_warm_res.mat
           grep -q "The simulation finished successfully" fwp_warm/results/warm.log
 
-      - name: Build transition and fixed-closed executables
+      - name: Build transition and continuous-topology executable
         shell: bash
         run: |
           set -euo pipefail
@@ -335,10 +336,9 @@ jobs:
             method="dassl", outputFormat="csv", fileNamePrefix="fwp_hp_transition_raw",
             variableFilter="^(time|arretPomesHP\\.y\\.signal|PompeAlimHP\\.Q|CapteurDebitEauHP\\.Measure\\.signal|Ballon(HP|MP|BP)\\.(P|zl)|tripLensFwpHpDischargeNRV\\.opening)$");
           getErrorString();
-          loadFile("/workspace/build/TripLens_FWP_HP_ClosedRuntime.mo"); getErrorString();
-          buildModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_HP_ClosedRuntime,
-            startTime=301, stopTime=420, numberOfIntervals=1190, tolerance=1e-3,
-            method="cvode", outputFormat="csv", fileNamePrefix="fwp_hp_closed_hold",
+          buildModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_HP_TripRuntime,
+            startTime=300, stopTime=420, numberOfIntervals=1200, tolerance=1e-3,
+            method="dassl", outputFormat="csv", fileNamePrefix="fwp_hp_full_raw",
             variableFilter="^(time|arretPomesHP\\.y\\.signal|PompeAlimHP\\.Q|CapteurDebitEauHP\\.Measure\\.signal|Ballon(HP|MP|BP)\\.(P|zl)|tripLensFwpHpDischargeNRV\\.opening)$");
           getErrorString();
           MOS
@@ -349,7 +349,7 @@ jobs:
             omc /workspace/build/build_trip_restart.mos | tee fwp_warm/results/build_trip_restart.log
           test -x fwp_warm/results/fwp_hp_transition_state
           test -x fwp_warm/results/fwp_hp_transition_raw
-          test -x fwp_warm/results/fwp_hp_closed_hold
+          test -x fwp_warm/results/fwp_hp_full_raw
 
       - name: Cross 300-to-301 second HP trip transition
         shell: bash
@@ -380,73 +380,44 @@ jobs:
           test -s fwp_warm/results/fwp_hp_transition_state_res.mat
           test -s fwp_warm/results/fwp_hp_transition_raw.csv
 
-      - name: Run 301-to-420 second fixed-closed physical response
+      - name: Run 300-to-420 second continuous-topology physical response
         shell: bash
         run: |
           set -euo pipefail
           chosen=""
-          for attempt in none_cvode none_dassl symbolic_dassl; do
-            init_method="${attempt%%_*}"
-            solver="${attempt#*_}"
+          for solver in dassl cvode; do
             set +e
-            timeout 12m docker run --rm \
+            timeout 18m docker run --rm \
               -v "$PWD/fwp_warm/results:/work" \
               -w /work \
               openmodelica/openmodelica:v1.27.0-minimal \
-              ./fwp_hp_closed_hold \
-                -iif=/work/fwp_hp_transition_state_res.mat \
-                -iit=301 \
-                -iim="$init_method" \
+              ./fwp_hp_full_raw \
+                -iif=/work/fwp_hp_warm_res.mat \
+                -iit=300 \
+                -iim=none \
                 -s="$solver" \
                 -noEventEmit \
-                -initialStepSize=1e-4 \
+                -initialStepSize=1e-5 \
                 -maxStepSize=0.1 \
-                -r="/work/fwp_hp_closed_hold_${attempt}.csv" \
+                -r="/work/fwp_hp_trip_raw_${solver}.csv" \
                 -lv=LOG_INIT,LOG_STATS \
-              | tee "fwp_warm/results/trip_closed_hold_${attempt}.log"
+              | tee "fwp_warm/results/trip_full_${solver}.log"
             rc=${PIPESTATUS[0]}
             set -e
             if [[ "$rc" -eq 0 ]] && grep -q "The simulation finished successfully" \
-                "fwp_warm/results/trip_closed_hold_${attempt}.log"; then
-              chosen="$attempt"
+                "fwp_warm/results/trip_full_${solver}.log"; then
+              chosen="$solver"
               break
             fi
-            if [[ -s "fwp_warm/results/fwp_hp_closed_hold_${attempt}.csv" ]]; then
-              tail -n 6 "fwp_warm/results/fwp_hp_closed_hold_${attempt}.csv"
+            if [[ -s "fwp_warm/results/fwp_hp_trip_raw_${solver}.csv" ]]; then
+              tail -n 6 "fwp_warm/results/fwp_hp_trip_raw_${solver}.csv"
             fi
           done
           test -n "$chosen"
-          printf 'dassl-transition+fixed-closed-%s\n' "$chosen" \
+          mv "fwp_warm/results/fwp_hp_trip_raw_${chosen}.csv" \
+             fwp_warm/results/fwp_hp_trip_raw.csv
+          printf 'continuous-topology-%s\n' "$chosen" \
             > fwp_warm/results/selected_solver.txt
-
-          python3 - "$chosen" <<'PY'
-          import csv,sys
-          from pathlib import Path
-          attempt=sys.argv[1]
-          paths=[
-              Path('fwp_warm/results/fwp_hp_transition_raw.csv'),
-              Path(f'fwp_warm/results/fwp_hp_closed_hold_{attempt}.csv'),
-          ]
-          header=None
-          combined=[]
-          last_time=None
-          for path in paths:
-              with path.open(newline='',encoding='utf-8-sig') as f:
-                  r=csv.reader(f); current=next(r); rows=list(r)
-              if header is None:
-                  header=current
-              elif current != header:
-                  raise SystemExit(f'RAW headers differ: {path}')
-              for row in rows:
-                  t=float(row[0].strip('"'))
-                  if last_time is None or t > last_time + 1e-7:
-                      combined.append(row)
-                      last_time=t
-          target=Path('fwp_warm/results/fwp_hp_trip_raw.csv')
-          with target.open('w',newline='',encoding='utf-8') as f:
-              w=csv.writer(f); w.writerow(header); w.writerows(combined)
-          print('COMBINED_RAW_ROWS',len(combined),'END_TIME',last_time)
-          PY
           test -s fwp_warm/results/fwp_hp_trip_raw.csv
 
       - name: Validate warm-started physical response
@@ -558,7 +529,7 @@ jobs:
               'status':'pass',
               'simulation_success':True,
               'warm_state_used':True,
-              'restart_method':f'emit-protected snapshot + R&D regularized HP discharge isolation + {selected_solver} + iif/iit/iim=none',
+              'restart_method':f'NORMAL_100 solved state + R&D regularized HP discharge isolation + {selected_solver} + iif/iit/iim=none',
               'selected_solver':selected_solver,
               'raw_start_s':t[0],
               'raw_end_s':t[-1],
@@ -598,12 +569,12 @@ jobs:
             fwp_warm/results/warm.log
             fwp_warm/results/build_trip_restart.log
             fwp_warm/results/trip_transition_*.log
-            fwp_warm/results/trip_closed_hold_*.log
+            fwp_warm/results/trip_full_*.log
             fwp_warm/results/selected_solver.txt
             fwp_warm/results/fwp_hp_warm_res.mat
             fwp_warm/results/fwp_hp_transition_state_res.mat
             fwp_warm/results/fwp_hp_transition_raw.csv
-            fwp_warm/results/fwp_hp_closed_hold_*.csv
+            fwp_warm/results/fwp_hp_trip_raw_*.csv
             fwp_warm/results/fwp_hp_trip_raw.csv
             fwp_warm/results/fwp_hp_warmstart_report.json
             fwp_warm/build/TripLens_FWP_HP_WarmSeeded.mo
