@@ -1,0 +1,44 @@
+name: Trip Breaker Semantics
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ecms_contract/trip_breaker_contract_v1.csv'
+      - 'ecms_logic/build_trip_breaker_semantics_core.m'
+      - '.github/workflows/trip-breaker-semantics.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trip-breaker-semantics
+  cancel-in-progress: true
+
+jobs:
+  matlab-trip-breaker-semantics:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build and regress breaker-state semantics
+        shell: cmd
+        run: |
+          "C:\Program Files\MATLAB\R2025b\bin\matlab.exe" -batch "addpath(fullfile(getenv('GITHUB_WORKSPACE'),'ecms_logic')); build_trip_breaker_semantics_core" > "trip_breaker_semantics.log" 2>&1
+          findstr /C:"TRIPLENS TRIP BREAKER SEMANTICS PASS=1" trip_breaker_semantics.log >nul || (type trip_breaker_semantics.log & exit /b 1)
+          findstr /C:"TRIP_SUCCESS_REQUIRED_BREAKER_CLOSED=0" trip_breaker_semantics.log >nul || exit /b 1
+          findstr /C:"DERATING_BREAKER_CLOSED=1" trip_breaker_semantics.log >nul || exit /b 1
+      - name: Upload semantics evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trip-breaker-semantics-${{ github.run_number }}
+          path: |
+            trip_breaker_semantics.log
+            outputs/trip_breaker_semantics_report.json
+            outputs/TripLens_ECMS_Trip_Breaker_Semantics_Core.slx
+          if-no-files-found: warn
+          retention-days: 30
