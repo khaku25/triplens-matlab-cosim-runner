@@ -1,0 +1,178 @@
+name: TripTAC Normal Hold Capture
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'legacy_exact/modelica/TripLens_CombinedCycle_NormalHold.mo'
+      - 'ci/install_normal_hold.ps1'
+      - '.github/workflows/triptac-normal-hold-capture.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: triptac-normal-hold-capture
+  cancel-in-progress: false
+
+jobs:
+  capture-normal-hold:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare exact pinned ThermoSysPro
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf legacy_exact/vendor/ThermoSysPro legacy_exact/build/normal_hold
+          mkdir -p legacy_exact/vendor legacy_exact/build/normal_hold/omhome
+          git clone --no-checkout https://github.com/Dwarf-Planet-Project/ThermoSysPro.git legacy_exact/vendor/ThermoSysPro
+          git -C legacy_exact/vendor/ThermoSysPro checkout --detach db81ae1b5a6a85f6c6c7693244cafa6087e18ff5
+          test "$(git -C legacy_exact/vendor/ThermoSysPro rev-parse HEAD)" = db81ae1b5a6a85f6c6c7693244cafa6087e18ff5
+          cp legacy_exact/modelica/TripLens_CombinedCycle_NormalHold.mo legacy_exact/build/normal_hold/reference_normal_hold.mo
+
+      - name: Install Modelica 3.2.3
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$PWD/legacy_exact/build/normal_hold/omhome:/root" \
+            -v "$PWD/legacy_exact:/workspace" \
+            -w /workspace \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            omc /workspace/modelica/install_dependencies.mos
+
+      - name: Solve 300 s normal hold and capture full state
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > legacy_exact/build/normal_hold/capture_normal_hold.mos <<'MOS'
+          setCommandLineOptions("--std=3.4");
+          loadModel(Modelica,{"3.2.3"}); getErrorString();
+          loadFile("/workspace/vendor/ThermoSysPro/ThermoSysPro/package.mo"); getErrorString();
+          loadFile("/workspace/modelica/TripLens_CombinedCycle_NormalHold.mo"); getErrorString();
+          cd("/workspace/build/normal_hold");
+          simulate(TripLens_CombinedCycle_NormalHold,
+            startTime=0,
+            stopTime=300,
+            numberOfIntervals=3000,
+            tolerance=1e-3,
+            method="dassl",
+            outputFormat="mat",
+            variableFilter=".*",
+            simflags="-noEventEmit -emit_protected",
+            fileNamePrefix="normal_hold_full");
+          getErrorString();
+          MOS
+          docker run --rm \
+            -v "$PWD/legacy_exact/build/normal_hold/omhome:/root" \
+            -v "$PWD/legacy_exact:/workspace" \
+            -w /workspace \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            omc /workspace/build/normal_hold/capture_normal_hold.mos \
+            > legacy_exact/build/normal_hold/capture_normal_hold.log 2>&1
+          tail -60 legacy_exact/build/normal_hold/capture_normal_hold.log
+          test -s legacy_exact/build/normal_hold/normal_hold_full_res.mat
+
+          docker run --rm \
+            -v "$PWD/legacy_exact:/workspace" \
+            -w /workspace/build/normal_hold \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            ./normal_hold_full -outputFormat=csv -r=normal_hold_full.csv -emit_protected -noEventEmit \
+            > legacy_exact/build/normal_hold/csv_run.log 2>&1
+          cat legacy_exact/build/normal_hold/csv_run.log
+          sudo chown -R "$(id -u):$(id -g)" legacy_exact/build/normal_hold
+
+      - name: Verify nominal inputs and create t=300 state manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import csv, hashlib, json, math, os
+
+          d=Path('legacy_exact/build/normal_hold')
+          with (d/'normal_hold_full.csv').open(newline='') as f:
+              reader=csv.DictReader(f)
+              names=reader.fieldnames
+              rows=list(reader)
+
+          assert names and len(names)>1000, 'full-state inventory unexpectedly small'
+          assert rows and abs(float(rows[-1]['time'])-300.0)<1e-6
+          assert len(names)==len(set(names)), 'duplicate variable names are unsafe for warm start'
+
+          critical=['Alternateur.Welec','BallonHP.P','BallonMP.P','BallonBP.P',
+                    'BallonHP.zl','BallonMP.zl','BallonBP.zl']
+          for row in rows:
+              flow=float(row['Debit.y.signal'])
+              temp=float(row['Temperature.y.signal'])
+              assert abs(flow-606.94)<1e-8, ('normal flow changed',row['time'],flow)
+              assert abs(temp-893.75)<1e-8, ('normal temperature changed',row['time'],temp)
+              assert all(math.isfinite(float(row[n])) for n in critical)
+
+          row=rows[-1]
+          values={n:float(v) for n,v in row.items() if n!='time' and math.isfinite(float(v))}
+          snapshot={'time_s':300.0,'values':values}
+          (d/'normal_hold_snapshot_300.json').write_text(json.dumps(snapshot,indent=2,allow_nan=False))
+
+          summary={
+              'status':'pass',
+              'run_id':os.environ['GITHUB_RUN_ID'],
+              'commit':os.environ['GITHUB_SHA'],
+              'thermosyspro_commit':'db81ae1b5a6a85f6c6c7693244cafa6087e18ff5',
+              'model':'TripLens_CombinedCycle_NormalHold',
+              'state_time_s':300.0,
+              'gt_exhaust_flow_kg_s':606.94,
+              'gt_exhaust_temperature_K':893.75,
+              'scheduled_trip':False,
+              'variables':len(names)-1,
+              'critical_at_300':{n:values[n] for n in critical},
+              'sha256':{}
+          }
+          for name in ['normal_hold_full_res.mat','reference_normal_hold.mo','normal_hold_full.csv']:
+              summary['sha256'][name]=hashlib.sha256((d/name).read_bytes()).hexdigest()
+          (d/'normal_hold_capture_summary.json').write_text(json.dumps(summary,indent=2))
+          print(json.dumps(summary,indent=2))
+          print('NORMAL_HOLD_FULL_STATE_CAPTURE_PASS')
+          PY
+
+      - name: Upload normal-hold full state
+        uses: actions/upload-artifact@v4
+        with:
+          name: normal-hold-full-state-${{ github.run_number }}
+          path: |
+            legacy_exact/build/normal_hold/normal_hold_full_res.mat
+            legacy_exact/build/normal_hold/normal_hold_full.csv
+            legacy_exact/build/normal_hold/normal_hold_snapshot_300.json
+            legacy_exact/build/normal_hold/normal_hold_capture_summary.json
+            legacy_exact/build/normal_hold/reference_normal_hold.mo
+            legacy_exact/build/normal_hold/capture_normal_hold.log
+          if-no-files-found: error
+          retention-days: 30
+
+  install-windows-normal-hold:
+    needs: capture-normal-hold
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: normal-hold-full-state-${{ github.run_number }}
+          path: normal_hold_artifact
+      - name: Install normal-hold state and model on Windows
+        shell: cmd
+        run: |
+          "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%GITHUB_WORKSPACE%\ci\install_normal_hold.ps1" -SourceRoot "%GITHUB_WORKSPACE%\normal_hold_artifact" -ModelSource "%GITHUB_WORKSPACE%\legacy_exact\modelica\TripLens_CombinedCycle_NormalHold.mo" -Dest "C:\TripLensWarm"
+      - name: Verify Windows normal-hold files
+        shell: cmd
+        run: |
+          if not exist C:\TripLensWarm\normal_hold_res.mat exit /b 1
+          if not exist C:\TripLensWarm\TripLens_CombinedCycle_NormalHold.mo exit /b 1
+          if not exist C:\TripLensWarm\README_NORMAL_HOLD.txt exit /b 1
+          dir C:\TripLensWarm
+          echo WINDOWS_NORMAL_HOLD_READY
