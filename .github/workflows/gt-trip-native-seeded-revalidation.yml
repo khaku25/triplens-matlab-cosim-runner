@@ -92,18 +92,21 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: current-3input-native-seeded-source-${{ github.run_number }}
-          path: seeded_3input
+          path: seeded_3input_download
 
       - name: Build same proven CVODE runtime around current 3-input seed
         shell: bash
         run: |
           set -euo pipefail
+          SEED_FMU="$(find seeded_3input_download -name 'TripLens_CombinedCycle_TripTAC_CoSim.fmu' -print -quit)"
+          SEED_MANIFEST="$(find seeded_3input_download -name 'native_seed_manifest.json' -print -quit)"
+          test -n "$SEED_FMU" && test -n "$SEED_MANIFEST"
           printf '%s\n' 'set(CMAKE_C_FLAGS_RELEASE "-O0 -DNDEBUG" CACHE STRING "Diagnostic build" FORCE)' > "$RUNNER_TEMP/cvode_compile_flags.cmake"
           export CMAKE_TOOLCHAIN_FILE="$RUNNER_TEMP/cvode_compile_flags.cmake"
           python3 -m py_compile ci/cvode/build_cvode_fmu.py ci/cvode/build_cvode_fmu_from_seed_manifest.py ci/cvode_allocator_fix.py
           python3 ci/cvode/build_cvode_fmu_from_seed_manifest.py \
-            --seed-fmu seeded_3input/TripLens_CombinedCycle_TripTAC_CoSim.fmu \
-            --seed-manifest seeded_3input/native_seed_manifest.json \
+            --seed-fmu "$SEED_FMU" \
+            --seed-manifest "$SEED_MANIFEST" \
             --work cvode_3input_work \
             --out cvode_3input_build \
             --platform linux64 \
