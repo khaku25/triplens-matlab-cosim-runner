@@ -1,0 +1,162 @@
+{
+  "status": "pass",
+  "actual_fmi_cosimulation": true,
+  "csv_replay": false,
+  "st_trip_input_held_zero": true,
+  "trip_at_s": 5.0,
+  "stop_s": 125.0,
+  "step_s": 0.1,
+  "nominal_command": {
+    "gtExhaustFlowCmd": 606.94,
+    "gtExhaustTemperatureCmd": 893.75,
+    "stTripCmd": 0.0
+  },
+  "gt_trip_command": {
+    "gtExhaustFlowCmd": 150.0,
+    "gtExhaustTemperatureCmd": 550.0,
+    "stTripCmd": 0.0
+  },
+  "initialization_passed": true,
+  "pre_trip": {
+    "stElectricalPower": 263108987.70309785,
+    "hpDrumLevel": 1.0500000035233696,
+    "hpDrumPressure": 12726424.263157682,
+    "ipDrumLevel": 1.0500000007691561,
+    "ipDrumPressure": 2733918.325699992,
+    "lpDrumLevel": 1.7500219230707292,
+    "lpDrumPressure": 536009.016553413,
+    "hpTurbineInletValveOpening": 0.8,
+    "mpTurbineInletValveOpening": 0.8
+  },
+  "final": {
+    "stElectricalPower": 159113478.64352816,
+    "hpDrumLevel": 1.2492592538846055,
+    "hpDrumPressure": 8681284.186649477,
+    "ipDrumLevel": 1.3900125867126187,
+    "ipDrumPressure": 2095160.6563748727,
+    "lpDrumLevel": 1.6103280180271136,
+    "lpDrumPressure": 366974.5237696166,
+    "hpTurbineInletValveOpening": 0.8,
+    "mpTurbineInletValveOpening": 0.8
+  },
+  "checkpoints": {
+    "0.0": {
+      "stElectricalPower": 263112293.28425556,
+      "hpDrumLevel": 1.05,
+      "hpDrumPressure": 12726424.235626074,
+      "ipDrumLevel": 1.05,
+      "ipDrumPressure": 2733918.284814338,
+      "lpDrumLevel": 1.75,
+      "lpDrumPressure": 536006.6647422054,
+      "hpTurbineInletValveOpening": 0.8,
+      "mpTurbineInletValveOpening": 0.8
+    },
+    "4.9": {
+      "stElectricalPower": 263108987.70309785,
+      "hpDrumLevel": 1.0500000035233696,
+      "hpDrumPressure": 12726424.263157682,
+      "ipDrumLevel": 1.0500000007691561,
+      "ipDrumPressure": 2733918.325699992,
+      "lpDrumLevel": 1.7500219230707292,
+      "lpDrumPressure": 536009.016553413,
+      "hpTurbineInletValveOpening": 0.8,
+      "mpTurbineInletValveOpening": 0.8
+    },
+    "5.0": {
+      "stElectricalPower": 263108974.12807766,
+      "hpDrumLevel": 1.0500000036610584,
+      "hpDrumPressure": 12726424.264152786,
+      "ipDrumLevel": 1.0500000007957746,
+      "ipDrumPressure": 2733918.3267796165,
+      "lpDrumLevel": 1.7500224012868346,
+      "lpDrumPressure": 536009.041849985,
+      "hpTurbineInletValveOpening": 0.8,
+      "mpTurbineInletValveOpening": 0.8
+    },
+    "5.1": {
+      "stElectricalPower": 263102921.59314218,
+      "hpDrumLevel": 1.0499993115671495,
+      "hpDrumPressure": 12726336.154270092,
+      "ipDrumLevel": 1.0499997769540914,
+      "ipDrumPressure": 2733912.1861611777,
+      "lpDrumLevel": 1.750022714790331,
+      "lpDrumPressure": 536004.949507394,
+      "hpTurbineInletValveOpening": 0.8,
+      "mpTurbineInletValveOpening": 0.8
+    },
+    "10.0": {
+      "stElectricalPower": 258562069.3071583,
+      "hpDrumLevel": 1.0491587484791687,
+      "hpDrumPressure": 12539088.12353903,
+      "ipDrumLevel": 1.0493422145102256,
+      "ipDrumPressure": 2709357.26407634,
+      "lpDrumLevel": 1.7493298152529129,
+      "lpDrumPressure": 524264.56278711837,
+      "hpTurbineInletValveOpening": 0.8,
+      "mpTurbineInletValveOpening": 0.8
+    },
+    "30.0": {
+      "stElectricalPower": 239975599.35241002,
+      "hpDrumLevel": 1.0522451838099236,
+      "hpDrumPressure": 11540113.32582567,
+      "ipDrumLevel": 1.200120774449839,
+      "ipDrumPressure": 2636459.1250962466,
+      "lpDrumLevel": 1.7383485969468229,
+      "lpDrumPressure": 479075.885795784,
+      "hpTurbineInletValveOpening": 0.8,
+      "mpTurbineInletValveOpening": 0.8
+    },
+    "60.0": {
+      "stElectricalPower": 211209462.3065036,
+      "hpDrumLevel": 1.1284556209184813,
+      "hpDrumPressure": 10508816.400080437,
+      "ipDrumLevel": 1.3330105950147682,
+      "ipDrumPressure": 2472487.226664758,
+      "lpDrumLevel": 1.7080273580295615,
+      "lpDrumPressure": 432011.058253475,
+      "hpTurbineInletValveOpening": 0.8,
+      "mpTurbineInletValveOpening": 0.8
+    },
+    "90.0": {
+      "stElectricalPower": 189483131.09718663,
+      "hpDrumLevel": 1.1792390240937611,
+      "hpDrumPressure": 9661929.86556168,
+      "ipDrumLevel": 1.362588767562858,
+      "ipDrumPressure": 2297655.8291046177,
+      "lpDrumLevel": 1.668744863510832,
+      "lpDrumPressure": 395664.9961455657,
+      "hpTurbineInletValveOpening": 0.8,
+      "mpTurbineInletValveOpening": 0.8
+    },
+    "125.0": {
+      "stElectricalPower": 159113478.64352816,
+      "hpDrumLevel": 1.2492592538846055,
+      "hpDrumPressure": 8681284.186649477,
+      "ipDrumLevel": 1.3900125867126187,
+      "ipDrumPressure": 2095160.6563748727,
+      "lpDrumLevel": 1.6103280180271136,
+      "lpDrumPressure": 366974.5237696166,
+      "hpTurbineInletValveOpening": 0.8,
+      "mpTurbineInletValveOpening": 0.8
+    }
+  },
+  "st_power_initial_W": 263112293.28425556,
+  "st_power_pre_trip_W": 263108987.70309785,
+  "st_power_final_W": 159113478.64352816,
+  "st_power_min_W": 159113478.64352816,
+  "st_power_final_change_pct_vs_pretrip": -39.525639153354255,
+  "st_power_min_change_pct_vs_pretrip": -39.525639153354255,
+  "hp_admission_stayed_native_0p8": true,
+  "mp_admission_stayed_native_0p8": true,
+  "drum_level_final_minus_pretrip_m": {
+    "hp": 0.19925925036123582,
+    "ip": 0.3400125859434626,
+    "lp": -0.13969390504361567
+  },
+  "interpretation_gate": {
+    "strong_trip_like_if_st_power_drop_pct_le_minus_70": false,
+    "moderate_derating_if_drop_between_20_and_70_pct": true,
+    "weak_response_if_drop_gt_minus_20_pct": false
+  },
+  "wall_seconds": 365.438291509
+}
