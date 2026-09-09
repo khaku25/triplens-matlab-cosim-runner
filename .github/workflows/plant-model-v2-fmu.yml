@@ -1,0 +1,143 @@
+name: Plant Model v2 Co-Simulation FMU
+
+on:
+  push:
+    branches: [integrate/plant-v2-fwp-hp-validated]
+    paths:
+      - 'plant_v2/scripts/build_plant_v2_cosim.py'
+      - 'plant_v2/scripts/validate_plant_v2.py'
+      - 'plant_v2/plant_model_v2_contract.json'
+      - '.github/workflows/plant-model-v2-fmu.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-v2-source-fmu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare pinned ThermoSysPro and generated v2 class
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf legacy_exact/vendor/ThermoSysPro plant_v2/build/fmu
+          mkdir -p legacy_exact/vendor plant_v2/build/fmu/omhome
+          git clone --no-checkout https://github.com/Dwarf-Planet-Project/ThermoSysPro.git legacy_exact/vendor/ThermoSysPro
+          git -C legacy_exact/vendor/ThermoSysPro checkout --detach db81ae1b5a6a85f6c6c7693244cafa6087e18ff5
+          python3 plant_v2/scripts/build_plant_v2_cosim.py
+          python3 plant_v2/scripts/validate_plant_v2.py
+
+      - name: Install Modelica 3.2.3
+        shell: bash
+        run: |
+          docker run --rm \
+            -v "$PWD/plant_v2/build/fmu/omhome:/root" \
+            -v "$PWD/legacy_exact:/workspace" \
+            -w /workspace \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            omc /workspace/modelica/install_dependencies.mos
+
+      - name: Export FMI 2.0 Co-Simulation source FMU
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > plant_v2/build/fmu/export.mos <<'MOS'
+          setCommandLineOptions("--std=3.4");
+          loadModel(Modelica,{"3.2.3"}); getErrorString();
+          loadFile("/repo/legacy_exact/vendor/ThermoSysPro/ThermoSysPro/package.mo"); getErrorString();
+          loadFile("/repo/plant_v2/build/TripLens_Plant_V2_CoSim.mo"); getErrorString();
+          cd("/repo/plant_v2/build/fmu");
+          checkModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_Plant_V2_CoSim);
+          getErrorString();
+          translateModelFMU(
+            ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_Plant_V2_CoSim,
+            version="2.0",
+            fmuType="cs",
+            fileNamePrefix="TripLens_Plant_V2_CoSim");
+          getErrorString();
+          MOS
+          docker run --rm \
+            -v "$PWD/plant_v2/build/fmu/omhome:/root" \
+            -v "$PWD:/repo" \
+            -w /repo \
+            openmodelica/openmodelica:v1.27.0-minimal \
+            omc /repo/plant_v2/build/fmu/export.mos | tee plant_v2/build/fmu/export.log
+
+          # OpenModelica runs as root in the container and may leave *.fmutmp
+          # directories unreadable to the hosted-runner user. Normalize only
+          # this generated build directory before inspecting/copying artifacts.
+          docker run --rm \
+            -v "$PWD:/repo" \
+            alpine:3.22 \
+            sh -c 'chmod -R a+rX /repo/plant_v2/build/fmu'
+
+          echo '--- generated FMU files ---'
+          find plant_v2/build/fmu -maxdepth 5 -type f -printf '%P\n' | sort | head -300
+          canonical="plant_v2/build/fmu/TripLens_Plant_V2_CoSim.fmu"
+          if [[ ! -s "$canonical" ]]; then
+            actual="$(find plant_v2/build/fmu -maxdepth 5 -type f -name '*.fmu' -print -quit)"
+            if [[ -z "$actual" || ! -s "$actual" ]]; then
+              echo 'translateModelFMU returned without a usable .fmu artifact' >&2
+              echo '--- FMU temp tree ---' >&2
+              find plant_v2/build/fmu -maxdepth 3 -printf '%M %P\n' | sort | tail -200 >&2 || true
+              exit 1
+            fi
+            cp "$actual" "$canonical"
+            echo "Canonicalized FMU path: $actual -> $canonical"
+          fi
+          test -s "$canonical"
+
+      - name: Verify integrated v2 FMI contract
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, zipfile, xml.etree.ElementTree as ET
+          from pathlib import Path
+          p=Path('plant_v2/build/fmu/TripLens_Plant_V2_CoSim.fmu')
+          with zipfile.ZipFile(p) as z:
+              names=z.namelist(); root=ET.fromstring(z.read('modelDescription.xml'))
+          vars=[]
+          for sv in root.find('ModelVariables'):
+              vars.append((sv.attrib['name'],sv.attrib.get('causality','local')))
+          inputs=[n for n,c in vars if c=='input']
+          outputs=[n for n,c in vars if c=='output']
+          required_inputs=['gtExhaustFlowCmd','gtExhaustTemperatureCmd','stTripCmd','fwpHpSpeedCmd','fwpIpSpeedCmd','fwpLpSpeedCmd']
+          required_outputs=['stElectricalPower','hpDrumLevel','ipDrumLevel','lpDrumLevel','hpDrumPressure','ipDrumPressure','lpDrumPressure','hpTurbineInletValveOpening','mpTurbineInletValveOpening','fwpHpSpeedApplied','fwpIpSpeedApplied','fwpLpSpeedApplied','fwpHpMassFlow','fwpIpMassFlow','fwpLpMassFlow']
+          missing_in=[x for x in required_inputs if x not in inputs]
+          missing_out=[x for x in required_outputs if x not in outputs]
+          assert not missing_in, missing_in
+          assert not missing_out, missing_out
+          assert root.find('CoSimulation') is not None
+          assert any(n.startswith('sources/') and n.endswith('.c') for n in names)
+          report={
+              'status':'pass',
+              'inputs':inputs,
+              'outputs':outputs,
+              'required_inputs':required_inputs,
+              'required_outputs':required_outputs,
+              'source_fmu':True,
+              'gt_trip_thermodynamic_shutdown':'PENDING_NATIVE_GT_SHUTDOWN_ADAPTER',
+              'gt_150_550_classification':'DERATING',
+              'st_trip_secondary_physics':'HP_MP_ADMISSION_CLOSE'
+          }
+          Path('plant_v2/build/fmu/fmu_contract.json').write_text(json.dumps(report,indent=2))
+          print(json.dumps(report,indent=2))
+          print('PLANT_V2_FMU_CONTRACT_PASS')
+          PY
+
+      - name: Upload v2 source FMU
+        uses: actions/upload-artifact@v4
+        with:
+          name: plant-v2-source-fmu-${{ github.run_number }}
+          path: |
+            plant_v2/build/fmu/TripLens_Plant_V2_CoSim.fmu
+            plant_v2/build/fmu/fmu_contract.json
+            plant_v2/build/fmu/export.log
+            plant_v2/build/TripLens_Plant_V2_CoSim.mo
+            plant_v2/plant_model_v2_contract.json
+          if-no-files-found: error
+          retention-days: 30
