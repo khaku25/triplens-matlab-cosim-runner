@@ -91,7 +91,7 @@ jobs:
               'native_numerical_regularization':'PompeAlimHP.continuous_flow_reversal=true; built-in Qeps smoothing only',
               'gt_boundary':'NORMAL_100 606.94 kg/s / 893.75 K',
               'coastdown_source':'R&D FWP virtual motor surrogate; tau approx 1 s, not plant-approved',
-              'initialization':'emit-protected solved snapshot -> dedicated 300-420 CVODE executable'
+              'initialization':'emit-protected solved snapshot -> dedicated 300-420 IDA/KLU executable'
           },indent=2),encoding='utf-8')
           print('FWP_HP_WARM_MODEL_BUILD_PASS')
           PY
@@ -135,7 +135,7 @@ jobs:
           test -s fwp_warm/results/fwp_hp_warm_res.mat
           grep -q "The simulation finished successfully" fwp_warm/results/warm.log
 
-      - name: Build dedicated 300-to-420 CVODE restart executable
+      - name: Build dedicated 300-to-420 IDA/KLU restart executable
         shell: bash
         run: |
           set -euo pipefail
@@ -147,7 +147,7 @@ jobs:
           cd("/workspace/results");
           buildModel(ThermoSysPro.Examples.CombinedCyclePowerPlant.TripLens_FWP_HP_WarmSeeded,
             startTime=300, stopTime=420, numberOfIntervals=1200, tolerance=1e-3,
-            method="cvode", outputFormat="csv", fileNamePrefix="fwp_hp_trip_restart",
+            method="ida", outputFormat="csv", fileNamePrefix="fwp_hp_trip_restart",
             variableFilter="^(time|arretPomesHP\\.y\\.signal|PompeAlimHP\\.Q|CapteurDebitEauHP\\.Measure\\.signal|Ballon(HP|MP|BP)\\.(P|zl))$");
           getErrorString();
           MOS
@@ -171,6 +171,12 @@ jobs:
               -iit=300 \
               -iim=none \
               -noEventEmit \
+              -initialStepSize=1e-4 \
+              -maxStepSize=0.1 \
+              -idaLS=klu \
+              -idaMaxNonLinIters=8 \
+              -idaMaxConvFails=20 \
+              -idaMaxErrorTestFails=20 \
               -r=/work/fwp_hp_trip_raw.csv \
               -lv=LOG_INIT,LOG_STATS | tee fwp_warm/results/trip_restart.log
           test -s fwp_warm/results/fwp_hp_trip_raw.csv
@@ -270,7 +276,7 @@ jobs:
               'status':'pass',
               'simulation_success':True,
               'warm_state_used':True,
-              'restart_method':'emit-protected snapshot + native zero-flow smoothing + dedicated CVODE executable + iif/iit/iim=none',
+              'restart_method':'emit-protected snapshot + native zero-flow smoothing + dedicated IDA/KLU executable + iif/iit/iim=none',
               'raw_start_s':t[0],
               'raw_end_s':t[-1],
               'raw_rows':len(rows),
