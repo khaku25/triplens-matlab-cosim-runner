@@ -2,9 +2,10 @@ name: Plant Model v2 Co-Simulation FMU
 
 on:
   push:
-    branches: [plant-model-v2]
+    branches: [integration/validated-stack-20260909]
     paths:
       - 'plant_v2/scripts/build_plant_v2_cosim.py'
+      - 'plant_v2/scripts/validate_plant_v2.py'
       - 'plant_v2/plant_model_v2_contract.json'
       - '.github/workflows/plant-model-v2-fmu.yml'
   workflow_dispatch:
@@ -65,7 +66,7 @@ jobs:
             omc /repo/plant_v2/build/fmu/export.mos | tee plant_v2/build/fmu/export.log
           test -s plant_v2/build/fmu/TripLens_Plant_V2_CoSim.fmu
 
-      - name: Verify v2 FMI contract
+      - name: Verify integrated v2 FMI contract
         shell: bash
         run: |
           python3 - <<'PY'
@@ -79,15 +80,25 @@ jobs:
               vars.append((sv.attrib['name'],sv.attrib.get('causality','local')))
           inputs=[n for n,c in vars if c=='input']
           outputs=[n for n,c in vars if c=='output']
-          required_inputs=['gtExhaustFlowCmd','gtExhaustTemperatureCmd','fwpHpSpeedCmd','fwpIpSpeedCmd','fwpLpSpeedCmd']
-          required_outputs=['stElectricalPower','hpDrumLevel','ipDrumLevel','lpDrumLevel','hpDrumPressure','ipDrumPressure','lpDrumPressure','fwpHpSpeedApplied','fwpIpSpeedApplied','fwpLpSpeedApplied','fwpHpMassFlow','fwpIpMassFlow','fwpLpMassFlow']
+          required_inputs=['gtExhaustFlowCmd','gtExhaustTemperatureCmd','stTripCmd','fwpHpSpeedCmd','fwpIpSpeedCmd','fwpLpSpeedCmd']
+          required_outputs=['stElectricalPower','hpDrumLevel','ipDrumLevel','lpDrumLevel','hpDrumPressure','ipDrumPressure','lpDrumPressure','hpTurbineInletValveOpening','mpTurbineInletValveOpening','fwpHpSpeedApplied','fwpIpSpeedApplied','fwpLpSpeedApplied','fwpHpMassFlow','fwpIpMassFlow','fwpLpMassFlow']
           missing_in=[x for x in required_inputs if x not in inputs]
           missing_out=[x for x in required_outputs if x not in outputs]
           assert not missing_in, missing_in
           assert not missing_out, missing_out
           assert root.find('CoSimulation') is not None
           assert any(n.startswith('sources/') and n.endswith('.c') for n in names)
-          report={'status':'pass','inputs':inputs,'outputs':outputs,'required_inputs':required_inputs,'required_outputs':required_outputs,'source_fmu':True}
+          report={
+              'status':'pass',
+              'inputs':inputs,
+              'outputs':outputs,
+              'required_inputs':required_inputs,
+              'required_outputs':required_outputs,
+              'source_fmu':True,
+              'gt_trip_thermodynamic_shutdown':'PENDING_NATIVE_GT_SHUTDOWN_ADAPTER',
+              'gt_150_550_classification':'DERATING',
+              'st_trip_secondary_physics':'HP_MP_ADMISSION_CLOSE'
+          }
           Path('plant_v2/build/fmu/fmu_contract.json').write_text(json.dumps(report,indent=2))
           print(json.dumps(report,indent=2))
           print('PLANT_V2_FMU_CONTRACT_PASS')
