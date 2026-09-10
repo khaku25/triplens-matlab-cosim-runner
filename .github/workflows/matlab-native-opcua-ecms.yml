@@ -86,18 +86,23 @@ jobs:
           name: matlab-opcua-modelica323-${{ github.run_number }}
           path: modelica_bundle
 
+      - name: Restore official OpenModelica installer cache
+        uses: actions/cache@v4
+        with:
+          path: C:\openmodelica-cache
+          key: openmodelica-windows-installer-1.27.0-x64
+
       - name: Install official OpenModelica 1.27.0
         shell: cmd
         run: |
-          curl.exe -fL --retry 4 --retry-delay 5 -o "%RUNNER_TEMP%\OpenModelica-v1.27.0-64bit.exe" https://build.openmodelica.org/omc/builds/windows/releases/1.27/0/64bin/OpenModelica-v1.27.0-64bit.exe
+          if not exist C:\openmodelica-cache mkdir C:\openmodelica-cache
+          if not exist C:\openmodelica-cache\OpenModelica-v1.27.0-64bit.exe curl.exe -fL --retry 4 --retry-delay 5 -o C:\openmodelica-cache\OpenModelica-v1.27.0-64bit.exe https://build.openmodelica.org/omc/builds/windows/releases/1.27/0/64bin/OpenModelica-v1.27.0-64bit.exe
           if errorlevel 1 exit /b 1
-          curl.exe -fL --retry 4 --retry-delay 5 -o "%RUNNER_TEMP%\OpenModelica-v1.27.0-64bit.exe.md5sum" https://build.openmodelica.org/omc/builds/windows/releases/1.27/0/64bin/OpenModelica-v1.27.0-64bit.exe.md5sum
+          curl.exe -fL --retry 4 --retry-delay 5 -o C:\openmodelica-cache\OpenModelica-v1.27.0-64bit.exe.md5sum https://build.openmodelica.org/omc/builds/windows/releases/1.27/0/64bin/OpenModelica-v1.27.0-64bit.exe.md5sum
           if errorlevel 1 exit /b 1
-          for /f "tokens=1" %%H in (%RUNNER_TEMP%\OpenModelica-v1.27.0-64bit.exe.md5sum) do set "EXPECTED_MD5=%%H"
-          for /f "skip=1 tokens=*" %%H in ('certutil -hashfile "%RUNNER_TEMP%\OpenModelica-v1.27.0-64bit.exe" MD5 ^| findstr /r /v "hash CertUtil"') do if not defined ACTUAL_MD5 set "ACTUAL_MD5=%%H"
-          set "ACTUAL_MD5=%ACTUAL_MD5: =%"
-          if /i not "%EXPECTED_MD5%"=="%ACTUAL_MD5%" exit /b 1
-          start /wait "" "%RUNNER_TEMP%\OpenModelica-v1.27.0-64bit.exe" /S /D=C:\OpenModelica1.27.0-64bit
+          for /f "tokens=1" %%H in (C:\openmodelica-cache\OpenModelica-v1.27.0-64bit.exe.md5sum) do certutil -hashfile C:\openmodelica-cache\OpenModelica-v1.27.0-64bit.exe MD5 | findstr /i /c:"%%H" >nul
+          if errorlevel 1 exit /b 1
+          start /wait "" C:\openmodelica-cache\OpenModelica-v1.27.0-64bit.exe /S /D=C:\OpenModelica1.27.0-64bit
           if errorlevel 1 exit /b 1
           if not exist C:\OpenModelica1.27.0-64bit\bin\omc.exe exit /b 1
 
