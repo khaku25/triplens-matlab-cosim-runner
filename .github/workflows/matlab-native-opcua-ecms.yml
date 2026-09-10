@@ -148,11 +148,7 @@ jobs:
           if exist T:\windows_native_server rmdir /s /q T:\windows_native_server
           mkdir T:\windows_native_server\omc-bin
           mkdir T:\windows_native_server\mingw-bin
-          copy /Y T:\thermo_server\build\TripLens_Native_OPCUA.exe T:\windows_native_server\
-          if errorlevel 1 exit /b 1
-          copy /Y T:\thermo_server\build\TripLens_Native_OPCUA_init.xml T:\windows_native_server\
-          if errorlevel 1 exit /b 1
-          copy /Y T:\thermo_server\build\TripLens_Native_OPCUA_info.json T:\windows_native_server\
+          copy /Y T:\thermo_server\build\TripLens_Native_OPCUA* T:\windows_native_server\
           if errorlevel 1 exit /b 1
           copy /Y T:\thermo_server\build\native-opcua-windows-build.log T:\windows_native_server\
           copy /Y T:\thermo_server\build\native-opcua-input-contract.txt T:\windows_native_server\
