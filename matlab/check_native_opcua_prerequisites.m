@@ -12,7 +12,7 @@ report = struct();
 report.status = 'STARTED';
 report.matlab_release = version('-release');
 report.matlab_version = version;
-report.simulink_available = license('test','Simulink') && exist('sim','file') == 2;
+report.simulink_available = ~isempty(ver('simulink'));
 report.opcua_function_available = exist('opcua','file') == 2;
 report.opcua_read_available = exist('readValue','file') == 2;
 report.opcua_write_available = exist('writeValue','file') == 2;
@@ -20,6 +20,12 @@ report.industrial_communication_toolbox = ~isempty(ver('icomm'));
 report.openmodelica_executable = '';
 
 try
+    fprintf('MATLAB_RELEASE=%s\n',report.matlab_release);
+    fprintf('SIMULINK_INSTALLED=%d\n',report.simulink_available);
+    fprintf('OPCUA_FUNCTION=%d READ=%d WRITE=%d ICOMM=%d\n', ...
+        report.opcua_function_available,report.opcua_read_available, ...
+        report.opcua_write_available,report.industrial_communication_toolbox);
+    fprintf('OPENMODELICA=%s\n',report.openmodelica_executable);
     report.openmodelica_executable = findOpenModelica();
     assert(report.simulink_available, ...
         'TripLens:SimulinkUnavailable','Simulink is not available.');
