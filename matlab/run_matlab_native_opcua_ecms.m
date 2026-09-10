@@ -168,8 +168,11 @@ simIn = Simulink.SimulationInput(modelName);
 simIn = simIn.setExternalInput(ds).setModelParameter('StopTime',num2str(stopTime));
 simOut = sim(simIn);
 yout = simOut.yout;
-gtClosed = yout.getElement('cb_52gt_closed').Values;
-stClosed = yout.getElement('cb_52st_closed').Values;
+% The validated core writes the outputs in the contract order. Use the
+% dataset index because signal names are not guaranteed to survive every
+% Simulink batch-logging configuration.
+gtClosed = yout.getElement(1).Values;
+stClosed = yout.getElement(2).Values;
 gtClosedData = double(gtClosed.Data(:));
 stClosedData = double(stClosed.Data(:));
 gtClosedTime = double(gtClosed.Time(:));
@@ -190,16 +193,17 @@ proof = struct('simulation_pass',true,'sample_time_s',Ts, ...
 end
 
 function client = connectWithRetry(host,port,timeoutSeconds)
-deadline = tic; last = [];
+deadline = tic; last = []; client = [];
 while toc(deadline) < timeoutSeconds
-    client = opcua(host,port);
-    client.Timeout = 10;
     try
+        client = opcua(sprintf('opc.tcp://%s:%d',host,port), ...
+            MessageSecurityMode="None",ChannelSecurityPolicy="None", ...
+            UseDiscoveryHostname=true);
         connect(client);
         return;
     catch ME
         last = ME;
-        safeDisconnect(client);
+        if ~isempty(client), safeDisconnect(client); end
         pause(0.25);
     end
 end
