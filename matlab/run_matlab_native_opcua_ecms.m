@@ -21,8 +21,13 @@ assert(isfinite(port) && port > 0 && port < 65536,'TripLens:BadPort');
 assert(isfinite(stopTime) && stopTime > 0,'TripLens:BadStopTime');
 assert(isfinite(stepSize) && stepSize > 0,'TripLens:BadStepSize');
 assert(commandTime > 0 && commandTime < stopTime,'TripLens:BadCommandTime');
-assert(exist('opcua','file') == 2,'TripLens:OPCUAUnavailable', ...
-    'Industrial Communication Toolbox OPC UA client is unavailable.');
+opcuaExistKind = exist('opcua');
+opcuaPath = which('opcua');
+fprintf('MATLAB_OPCUA_DISCOVERY exist=%d path=%s\n',opcuaExistKind,opcuaPath);
+assert(opcuaExistKind ~= 0 && ~isempty(opcuaPath), ...
+    'TripLens:OPCUAUnavailable', ...
+    ['Industrial Communication Toolbox OPC UA client is unavailable. ' ...
+     'exist(opcua)=%d, which(opcua)=%s'],opcuaExistKind,opcuaPath);
 assert(~isempty(ver('simulink')),'TripLens:SimulinkUnavailable');
 
 signal = signalContract();
