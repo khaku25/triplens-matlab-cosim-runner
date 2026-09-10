@@ -230,10 +230,10 @@ jobs:
           if ($null -eq $model) { throw 'Validated ECMS v2 model missing' }
           "TRIPLENS_ECMS_MODEL_PATH=$($model.FullName)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
 
-      - name: Set up MATLAB R2025b with OPC UA and Simulink
+      - name: Set up MATLAB R2026a with OPC UA and Simulink
         uses: matlab-actions/setup-matlab@v3
         with:
-          release: R2025b
+          release: R2026a
           products: >
             Simulink
             Industrial_Communication_Toolbox
