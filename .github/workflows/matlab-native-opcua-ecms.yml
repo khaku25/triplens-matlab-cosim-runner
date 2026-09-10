@@ -94,76 +94,65 @@ jobs:
           if errorlevel 1 exit /b 1
 
       - name: Prepare pinned native ThermoSysPro source
-        shell: powershell
+        shell: cmd
         run: |
-          $ErrorActionPreference = 'Stop'
-          Set-Location T:\
-          New-Item -ItemType Directory -Force -Path T:\omlib | Out-Null
-          New-Item -ItemType Directory -Force -Path T:\thermo_server\vendor | Out-Null
-          New-Item -ItemType Directory -Force -Path T:\thermo_server\build | Out-Null
+          T:
+          if not exist T:\omlib mkdir T:\omlib
+          if not exist T:\thermo_server\vendor mkdir T:\thermo_server\vendor
+          if not exist T:\thermo_server\build mkdir T:\thermo_server\build
           tar -xzf T:\modelica_bundle\modelica323_bundle.tar.gz -C T:\omlib
-          if (-not (Test-Path T:\omlib\libraries\index.json)) { throw 'Modelica library index missing' }
-          if (Test-Path T:\thermo_server\vendor\ThermoSysPro) {
-            Remove-Item -Recurse -Force T:\thermo_server\vendor\ThermoSysPro
-          }
-          & 'C:\Program Files\Git\cmd\git.exe' clone --no-checkout `
-            https://github.com/Dwarf-Planet-Project/ThermoSysPro.git `
-            T:\thermo_server\vendor\ThermoSysPro
-          if ($LASTEXITCODE -ne 0) { throw 'ThermoSysPro clone failed' }
-          & 'C:\Program Files\Git\cmd\git.exe' -C T:\thermo_server\vendor\ThermoSysPro `
-            checkout --detach $env:THERMOSYSPRO_COMMIT
-          if ($LASTEXITCODE -ne 0) { throw 'ThermoSysPro pin failed' }
-          python T:\thermo_server\scripts\render_modelica.py `
-            --external-trip-input --stop-time $env:TRIPLENS_OPCUA_STOP_TIME --intervals 200
-          if ($LASTEXITCODE -ne 0) { throw 'Modelica render failed' }
-          python T:\thermo_server\scripts\patch_turbine_bypass_model.py `
+          if errorlevel 1 exit /b 1
+          if not exist T:\omlib\libraries\index.json exit /b 1
+          if exist T:\thermo_server\vendor\ThermoSysPro rmdir /s /q T:\thermo_server\vendor\ThermoSysPro
+          "C:\Program Files\Git\cmd\git.exe" clone --no-checkout https://github.com/Dwarf-Planet-Project/ThermoSysPro.git T:\thermo_server\vendor\ThermoSysPro
+          if errorlevel 1 exit /b 1
+          "C:\Program Files\Git\cmd\git.exe" -C T:\thermo_server\vendor\ThermoSysPro checkout --detach %THERMOSYSPRO_COMMIT%
+          if errorlevel 1 exit /b 1
+          python T:\thermo_server\scripts\render_modelica.py --external-trip-input --stop-time %TRIPLENS_OPCUA_STOP_TIME% --intervals 200
+          if errorlevel 1 exit /b 1
+          python T:\thermo_server\scripts\patch_turbine_bypass_model.py ^
             --source T:\thermo_server\vendor\ThermoSysPro\ThermoSysPro\Examples\CombinedCyclePowerPlant\CombinedCycle_TripTAC.mo
-          if ($LASTEXITCODE -ne 0) { throw 'TripTAC patch failed' }
-          python T:\thermo_server\scripts\patch_stodola_turbine.py `
+          if errorlevel 1 exit /b 1
+          python T:\thermo_server\scripts\patch_stodola_turbine.py ^
             T:\thermo_server\vendor\ThermoSysPro\ThermoSysPro\WaterSteam\Machines\StodolaTurbine.mo
-          if ($LASTEXITCODE -ne 0) { throw 'Stodola patch failed' }
-          $mosPath = 'T:\thermo_server\build\build_native_opcua.mos'
-          $mos = [IO.File]::ReadAllText($mosPath).Replace('/workspace/','T:/thermo_server/')
-          [IO.File]::WriteAllText($mosPath,$mos,[Text.UTF8Encoding]::new($false))
+          if errorlevel 1 exit /b 1
+          python -c "from pathlib import Path; p=Path(r'T:\thermo_server\build\build_native_opcua.mos'); p.write_text(p.read_text(encoding='utf-8').replace('/workspace/','T:/thermo_server/'),encoding='utf-8')"
+          if errorlevel 1 exit /b 1
 
       - name: Build native Windows OpenModelica OPC UA server
-        shell: powershell
+        shell: cmd
         run: |
-          $ErrorActionPreference = 'Stop'
-          $omcRoot = 'C:\Program Files\OpenModelica1.28.0-dev-64bit'
-          $omc = Join-Path $omcRoot 'bin\omc.exe'
-          if (-not (Test-Path $omc)) { throw "OpenModelica compiler missing: $omc" }
-          $env:OPENMODELICALIBRARY = 'T:\omlib\libraries'
-          & $omc T:\thermo_server\build\build_native_opcua.mos `
-            *>&1 | Tee-Object T:\thermo_server\build\native-opcua-windows-build.log
-          if ($LASTEXITCODE -ne 0) { throw "OpenModelica build exited $LASTEXITCODE" }
-          if (-not (Test-Path T:\thermo_server\build\TripLens_Native_OPCUA.exe)) {
-            throw 'Native OPC UA server executable missing'
-          }
-          $contract = Select-String -Path T:\thermo_server\build\TripLens_Native_OPCUA_init.xml `
-            -Pattern 'name\s*=\s*"vppExternalTripCommandNative"' | Select-Object -First 1
-          if ($null -eq $contract) { throw 'Writable GT Trip input contract missing' }
-          $contract.Line | Set-Content -Encoding utf8 T:\thermo_server\build\native-opcua-input-contract.txt
+          set "OMC_ROOT=C:\Program Files\OpenModelica1.28.0-dev-64bit"
+          set "OPENMODELICALIBRARY=T:\omlib\libraries"
+          if not exist "%OMC_ROOT%\bin\omc.exe" exit /b 1
+          "%OMC_ROOT%\bin\omc.exe" T:\thermo_server\build\build_native_opcua.mos > T:\thermo_server\build\native-opcua-windows-build.log 2>&1
+          set "OMC_EXIT=%ERRORLEVEL%"
+          type T:\thermo_server\build\native-opcua-windows-build.log
+          if not "%OMC_EXIT%"=="0" exit /b %OMC_EXIT%
+          if not exist T:\thermo_server\build\TripLens_Native_OPCUA.exe exit /b 1
+          if not exist T:\thermo_server\build\TripLens_Native_OPCUA_init.xml exit /b 1
+          findstr /c:"vppExternalTripCommandNative" T:\thermo_server\build\TripLens_Native_OPCUA_init.xml > T:\thermo_server\build\native-opcua-input-contract.txt
+          if errorlevel 1 exit /b 1
 
       - name: Collect native Windows runtime
-        shell: powershell
+        shell: cmd
         run: |
-          $ErrorActionPreference = 'Stop'
-          $omcRoot = 'C:\Program Files\OpenModelica1.28.0-dev-64bit'
-          $dst = 'T:\windows_native_server'
-          New-Item -ItemType Directory -Force -Path $dst | Out-Null
-          New-Item -ItemType Directory -Force -Path "$dst\omc-bin" | Out-Null
-          New-Item -ItemType Directory -Force -Path "$dst\mingw-bin" | Out-Null
-          Copy-Item T:\thermo_server\build\TripLens_Native_OPCUA.exe $dst
-          Copy-Item T:\thermo_server\build\TripLens_Native_OPCUA_init.xml $dst
-          Copy-Item T:\thermo_server\build\TripLens_Native_OPCUA_info.json $dst
-          Copy-Item T:\thermo_server\build\native-opcua-windows-build.log $dst
-          Copy-Item T:\thermo_server\build\native-opcua-input-contract.txt $dst
-          Copy-Item "$omcRoot\bin\*.dll" "$dst\omc-bin" -ErrorAction SilentlyContinue
-          Copy-Item "$omcRoot\tools\msys\mingw64\bin\*.dll" "$dst\mingw-bin" -ErrorAction SilentlyContinue
-          if ((Get-ChildItem "$dst\omc-bin\*.dll","$dst\mingw-bin\*.dll" -ErrorAction SilentlyContinue).Count -eq 0) {
-            throw 'No OpenModelica runtime DLLs collected'
-          }
+          set "OMC_ROOT=C:\Program Files\OpenModelica1.28.0-dev-64bit"
+          if exist T:\windows_native_server rmdir /s /q T:\windows_native_server
+          mkdir T:\windows_native_server\omc-bin
+          mkdir T:\windows_native_server\mingw-bin
+          copy /Y T:\thermo_server\build\TripLens_Native_OPCUA.exe T:\windows_native_server\
+          if errorlevel 1 exit /b 1
+          copy /Y T:\thermo_server\build\TripLens_Native_OPCUA_init.xml T:\windows_native_server\
+          if errorlevel 1 exit /b 1
+          copy /Y T:\thermo_server\build\TripLens_Native_OPCUA_info.json T:\windows_native_server\
+          if errorlevel 1 exit /b 1
+          copy /Y T:\thermo_server\build\native-opcua-windows-build.log T:\windows_native_server\
+          copy /Y T:\thermo_server\build\native-opcua-input-contract.txt T:\windows_native_server\
+          copy /Y "%OMC_ROOT%\bin\*.dll" T:\windows_native_server\omc-bin\
+          if errorlevel 1 exit /b 1
+          copy /Y "%OMC_ROOT%\tools\msys\mingw64\bin\*.dll" T:\windows_native_server\mingw-bin\
+          if errorlevel 1 exit /b 1
 
       - name: Upload native Windows OPC UA server
         uses: actions/upload-artifact@v4
