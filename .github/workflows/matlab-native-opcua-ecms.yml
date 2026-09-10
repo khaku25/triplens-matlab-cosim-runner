@@ -158,8 +158,7 @@ jobs:
           copy /Y T:\thermo_server\build\native-opcua-input-contract.txt T:\windows_native_server\
           copy /Y "%OMC_ROOT%\bin\*.dll" T:\windows_native_server\omc-bin\
           if errorlevel 1 exit /b 1
-          copy /Y "%OMC_ROOT%\tools\msys\mingw64\bin\*.dll" T:\windows_native_server\mingw-bin\
-          if errorlevel 1 exit /b 1
+          if exist "%OMC_ROOT%\tools\msys\mingw64\bin\*.dll" copy /Y "%OMC_ROOT%\tools\msys\mingw64\bin\*.dll" T:\windows_native_server\mingw-bin\
 
       - name: Upload native Windows OPC UA server
         uses: actions/upload-artifact@v4
