@@ -1,0 +1,38 @@
+name: MATLAB ECMS OPC UA Prerequisites
+
+on:
+  push:
+    branches:
+      - codex/matlab-opcua-vpp-20260910
+    paths:
+      - matlab/check_native_opcua_prerequisites.m
+      - .github/workflows/matlab-opcua-prerequisites.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: matlab-ecms-opcua-prerequisites
+  cancel-in-progress: true
+
+jobs:
+  prerequisites:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify installed MATLAB ECMS and OPC UA stack
+        shell: cmd
+        run: |
+          "C:\Program Files\MATLAB\R2025b\bin\matlab.exe" -batch "addpath(fullfile(getenv('GITHUB_WORKSPACE'),'matlab')); check_native_opcua_prerequisites"
+
+      - name: Upload prerequisite evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: matlab-ecms-opcua-prerequisites-${{ github.run_number }}
+          path: outputs/matlab_opcua_prerequisites.json
+          if-no-files-found: warn
+          retention-days: 30
