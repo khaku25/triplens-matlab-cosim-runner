@@ -98,11 +98,16 @@ jobs:
         run: |
           T:
           if not exist T:\omlib mkdir T:\omlib
+          if not exist T:\omprofile\AppData\Roaming\.openmodelica\libraries mkdir T:\omprofile\AppData\Roaming\.openmodelica\libraries
+          if not exist T:\omprofile\AppData\Local mkdir T:\omprofile\AppData\Local
           if not exist T:\thermo_server\vendor mkdir T:\thermo_server\vendor
           if not exist T:\thermo_server\build mkdir T:\thermo_server\build
           tar -xzf T:\modelica_bundle\modelica323_bundle.tar.gz -C T:\omlib
           if errorlevel 1 exit /b 1
           if not exist T:\omlib\libraries\index.json exit /b 1
+          xcopy /E /I /Q /Y T:\omlib\libraries T:\omprofile\AppData\Roaming\.openmodelica\libraries >nul
+          if errorlevel 1 exit /b 1
+          if not exist T:\omprofile\AppData\Roaming\.openmodelica\libraries\index.json exit /b 1
           if exist T:\thermo_server\vendor\ThermoSysPro rmdir /s /q T:\thermo_server\vendor\ThermoSysPro
           "C:\Program Files\Git\cmd\git.exe" clone --no-checkout https://github.com/Dwarf-Planet-Project/ThermoSysPro.git T:\thermo_server\vendor\ThermoSysPro
           if errorlevel 1 exit /b 1
@@ -123,7 +128,9 @@ jobs:
         shell: cmd
         run: |
           set "OMC_ROOT=C:\Program Files\OpenModelica1.28.0-dev-64bit"
-          set "OPENMODELICALIBRARY=T:\omlib\libraries"
+          set "APPDATA=T:\omprofile\AppData\Roaming"
+          set "LOCALAPPDATA=T:\omprofile\AppData\Local"
+          set "OPENMODELICALIBRARY=T:\omprofile\AppData\Roaming\.openmodelica\libraries;T:\omlib\libraries"
           if not exist "%OMC_ROOT%\bin\omc.exe" exit /b 1
           "%OMC_ROOT%\bin\omc.exe" T:\thermo_server\build\build_native_opcua.mos > T:\thermo_server\build\native-opcua-windows-build.log 2>&1
           set "OMC_EXIT=%ERRORLEVEL%"
