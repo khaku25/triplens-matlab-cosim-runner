@@ -17,9 +17,10 @@ report.opcua_function_available = exist('opcua','file') == 2;
 report.opcua_read_available = exist('readValue','file') == 2;
 report.opcua_write_available = exist('writeValue','file') == 2;
 report.industrial_communication_toolbox = ~isempty(ver('icomm'));
-report.openmodelica_executable = findOpenModelica();
+report.openmodelica_executable = '';
 
 try
+    report.openmodelica_executable = findOpenModelica();
     assert(report.simulink_available, ...
         'TripLens:SimulinkUnavailable','Simulink is not available.');
     assert(report.opcua_function_available && report.opcua_read_available && ...
@@ -117,7 +118,7 @@ roots = ["C:\Program Files\OpenModelica*\bin\omc.exe"; ...
 for pattern = roots'
     found = dir(pattern);
     if ~isempty(found)
-        [~,order] = sort({found.folder},'descend');
+        [~,order] = sort(string({found.folder}),'descend');
         item = found(order(1));
         path = fullfile(item.folder,item.name);
         return;
