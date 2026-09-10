@@ -87,7 +87,7 @@ save(fullfile(outDir,'MATLAB-ECMS-OPCUA-received.mat'), ...
 
 report = validateCapture(capture,signal,commandTime);
 report.proof_type = 'MATLAB_SIMULINK_ECMS_TO_NATIVE_OPENMODELICA_OPCUA';
-report.client_implementation = 'MATLAB_R2025B_INDUSTRIAL_COMMUNICATION_TOOLBOX';
+report.client_implementation = 'MATLAB_R2026A_INDUSTRIAL_COMMUNICATION_TOOLBOX';
 report.command_source = 'SIMULINK_ECMS_TRIP_BREAKER_SEMANTICS_CORE';
 report.command_path = ['Simulink gt_trip_request -> MATLAB OPC UA write -> ' ...
     'native OpenModelica state'];
@@ -196,9 +196,9 @@ function client = connectWithRetry(host,port,timeoutSeconds)
 deadline = tic; last = []; client = [];
 while toc(deadline) < timeoutSeconds
     try
-        client = opcua(sprintf('opc.tcp://%s:%d',host,port), ...
+        client = opcua(host,port, ...
             MessageSecurityMode="None",ChannelSecurityPolicy="None", ...
-            UseDiscoveryHostname=true);
+            UseDiscoveryHostname=true,TrustServerTemporarily=true);
         connect(client);
         return;
     catch ME
