@@ -1,0 +1,174 @@
+name: MATLAB ECMS Native OPC UA Link
+
+on:
+  push:
+    branches:
+      - codex/matlab-opcua-vpp-20260910
+    paths:
+      - matlab/run_matlab_native_opcua_ecms.m
+      - .github/workflows/matlab-native-opcua-ecms.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: matlab-ecms-native-opcua-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  matlab-native-opcua:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    env:
+      OPENMODELICA_IMAGE: openmodelica/openmodelica:v1.27.0-minimal
+      THERMOSYSPRO_COMMIT: db81ae1b5a6a85f6c6c7693244cafa6087e18ff5
+      TRIPLENS_OPCUA_HOST: 127.0.0.1
+      TRIPLENS_OPCUA_PORT: '4841'
+      TRIPLENS_OPCUA_STOP_TIME: '2'
+      TRIPLENS_OPCUA_STEP_SIZE: '0.01'
+      TRIPLENS_OPCUA_COMMAND_TIME: '0.25'
+      OPCUA_CONTAINER: triplens-matlab-opcua-${{ github.run_id }}
+    steps:
+      - name: Check out MATLAB ECMS repository
+        uses: actions/checkout@v4
+
+      - name: Check out validated native ThermoSysPro server
+        uses: actions/checkout@v4
+        with:
+          repository: khaku25/triplens-thermosyspro-cloud-runner
+          ref: codex/live-main-fmu-ecms-20260910
+          path: thermo_server
+          persist-credentials: false
+
+      - name: Download validated SST-free MATLAB ECMS model
+        uses: actions/download-artifact@v4
+        with:
+          name: trip-breaker-semantics-4
+          path: ecms_artifact
+          repository: khaku25/triplens-matlab-cosim-runner
+          run-id: '34314118578'
+          github-token: ${{ github.token }}
+
+      - name: Select the actual MATLAB ECMS v2 model
+        shell: bash
+        run: |
+          set -euo pipefail
+          find ecms_artifact -maxdepth 4 -type f -print
+          model="$(find ecms_artifact -type f -name 'TripLens_ECMS_DigitalTwin_trip_semantics_v2.slx' -print -quit)"
+          test -n "$model"
+          test -s "$model"
+          echo "TRIPLENS_ECMS_MODEL_PATH=$GITHUB_WORKSPACE/$model" >> "$GITHUB_ENV"
+
+      - name: Set up MATLAB R2025b with OPC UA and Simulink
+        uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: >
+            Simulink
+            Industrial_Communication_Toolbox
+          cache: true
+
+      - name: Render and pin native ThermoSysPro physical plant
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p thermo_server/build/omhome thermo_server/vendor thermo_server/outputs/native-opcua
+          python3 thermo_server/scripts/render_modelica.py \
+            --external-trip-input \
+            --stop-time "$TRIPLENS_OPCUA_STOP_TIME" \
+            --intervals 200
+          git clone --no-checkout \
+            https://github.com/Dwarf-Planet-Project/ThermoSysPro.git \
+            thermo_server/vendor/ThermoSysPro
+          git -C thermo_server/vendor/ThermoSysPro checkout --detach "$THERMOSYSPRO_COMMIT"
+          test "$(git -C thermo_server/vendor/ThermoSysPro rev-parse HEAD)" = "$THERMOSYSPRO_COMMIT"
+          python3 thermo_server/scripts/patch_turbine_bypass_model.py \
+            --source thermo_server/vendor/ThermoSysPro/ThermoSysPro/Examples/CombinedCyclePowerPlant/CombinedCycle_TripTAC.mo
+          python3 thermo_server/scripts/patch_stodola_turbine.py \
+            thermo_server/vendor/ThermoSysPro/ThermoSysPro/WaterSteam/Machines/StodolaTurbine.mo
+
+      - name: Build the same native OpenModelica OPC UA server
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$PWD/thermo_server/build/omhome:/root" \
+            -v "$PWD/thermo_server:/workspace" \
+            -w /workspace \
+            "$OPENMODELICA_IMAGE" \
+            omc /workspace/modelica/install_dependencies.mos
+          docker run --rm \
+            -v "$PWD/thermo_server/build/omhome:/root" \
+            -v "$PWD/thermo_server:/workspace" \
+            -w /workspace \
+            "$OPENMODELICA_IMAGE" \
+            omc /workspace/build/build_native_opcua.mos \
+            | tee thermo_server/build/native-opcua-build.log
+          ! grep -Eq 'Failed to build model|Error:' thermo_server/build/native-opcua-build.log
+          test -x thermo_server/build/TripLens_Native_OPCUA
+          grep -n -m 1 -E \
+            'name[[:space:]]*=[[:space:]]*"vppExternalTripCommandNative"' \
+            thermo_server/build/TripLens_Native_OPCUA_init.xml \
+            > thermo_server/build/native-opcua-input-contract.txt
+
+      - name: Start native OPC UA physical server
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker rm -f "$OPCUA_CONTAINER" >/dev/null 2>&1 || true
+          docker run -d --name "$OPCUA_CONTAINER" --network host \
+            -v "$PWD/thermo_server/build:/workspace/build" \
+            -w /workspace/build \
+            "$OPENMODELICA_IMAGE" \
+            sh -c 'exec ./TripLens_Native_OPCUA -embeddedServer=opc-ua -embeddedServerPort=4841 -r=TripLens_Native_OPCUA_res.csv > openmodelica-native.log 2>&1'
+
+      - name: Run actual MATLAB ECMS OPC UA command and feedback loop
+        uses: matlab-actions/run-command@v3
+        with:
+          command: >-
+            addpath(fullfile(getenv('GITHUB_WORKSPACE'),'matlab'));
+            run_matlab_native_opcua_ecms
+
+      - name: Verify native server completion and build dashboard
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(timeout 60 docker wait "$OPCUA_CONTAINER")"
+          test "$status" = '0'
+          test -s outputs/matlab-native-opcua/ECMS-native-physical.csv
+          test -s outputs/matlab-native-opcua/native-opcua-proof.json
+          python3 thermo_server/scripts/build_native_opcua_dashboard.py \
+            --capture outputs/matlab-native-opcua/ECMS-native-physical.csv \
+            --proof outputs/matlab-native-opcua/native-opcua-proof.json \
+            --output outputs/matlab-native-opcua/MATLAB-ECMS-native-dashboard.html
+
+      - name: Preserve native server log
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p outputs/matlab-native-opcua
+          docker logs "$OPCUA_CONTAINER" > outputs/matlab-native-opcua/container.log 2>&1 || true
+          if test -f thermo_server/build/openmodelica-native.log; then
+            cp thermo_server/build/openmodelica-native.log outputs/matlab-native-opcua/openmodelica-native.log
+          fi
+
+      - name: Upload MATLAB OPC UA physical-link evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: matlab-ecms-native-opcua-${{ github.run_number }}
+          path: |
+            outputs/matlab-native-opcua/**
+            outputs/trip_breaker_semantics_report.json
+            outputs/TripLens_ECMS_Trip_Breaker_Semantics_Core.slx
+            thermo_server/build/native-opcua-build.log
+            thermo_server/build/native-opcua-input-contract.txt
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Remove OPC UA server container
+        if: always()
+        shell: bash
+        run: docker rm -f "$OPCUA_CONTAINER" >/dev/null 2>&1 || true
