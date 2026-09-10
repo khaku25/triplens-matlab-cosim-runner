@@ -66,7 +66,7 @@ jobs:
 
   build-native-windows:
     needs: prepare-modelica323
-    runs-on: [self-hosted, Windows, X64]
+    runs-on: windows-2025
     timeout-minutes: 180
     steps:
       - name: Check out MATLAB ECMS repository
@@ -85,6 +85,21 @@ jobs:
         with:
           name: matlab-opcua-modelica323-${{ github.run_number }}
           path: modelica_bundle
+
+      - name: Install official OpenModelica 1.27.0
+        shell: cmd
+        run: |
+          curl.exe -fL --retry 4 --retry-delay 5 -o "%RUNNER_TEMP%\OpenModelica-v1.27.0-64bit.exe" https://build.openmodelica.org/omc/builds/windows/releases/1.27/0/64bin/OpenModelica-v1.27.0-64bit.exe
+          if errorlevel 1 exit /b 1
+          curl.exe -fL --retry 4 --retry-delay 5 -o "%RUNNER_TEMP%\OpenModelica-v1.27.0-64bit.exe.md5sum" https://build.openmodelica.org/omc/builds/windows/releases/1.27/0/64bin/OpenModelica-v1.27.0-64bit.exe.md5sum
+          if errorlevel 1 exit /b 1
+          for /f "tokens=1" %%H in (%RUNNER_TEMP%\OpenModelica-v1.27.0-64bit.exe.md5sum) do set "EXPECTED_MD5=%%H"
+          for /f "skip=1 tokens=*" %%H in ('certutil -hashfile "%RUNNER_TEMP%\OpenModelica-v1.27.0-64bit.exe" MD5 ^| findstr /r /v "hash CertUtil"') do if not defined ACTUAL_MD5 set "ACTUAL_MD5=%%H"
+          set "ACTUAL_MD5=%ACTUAL_MD5: =%"
+          if /i not "%EXPECTED_MD5%"=="%ACTUAL_MD5%" exit /b 1
+          start /wait "" "%RUNNER_TEMP%\OpenModelica-v1.27.0-64bit.exe" /S /D=C:\OpenModelica1.27.0-64bit
+          if errorlevel 1 exit /b 1
+          if not exist C:\OpenModelica1.27.0-64bit\bin\omc.exe exit /b 1
 
       - name: Map ASCII workspace
         shell: cmd
@@ -127,7 +142,7 @@ jobs:
       - name: Build native Windows OpenModelica OPC UA server
         shell: cmd
         run: |
-          set "OMC_ROOT=C:\Program Files\OpenModelica1.28.0-dev-64bit"
+          set "OMC_ROOT=C:\OpenModelica1.27.0-64bit"
           set "APPDATA=T:\omprofile\AppData\Roaming"
           set "LOCALAPPDATA=T:\omprofile\AppData\Local"
           set "OPENMODELICALIBRARY=T:\omprofile\AppData\Roaming\.openmodelica\libraries;T:\omlib\libraries"
@@ -144,7 +159,7 @@ jobs:
       - name: Collect native Windows runtime
         shell: cmd
         run: |
-          set "OMC_ROOT=C:\Program Files\OpenModelica1.28.0-dev-64bit"
+          set "OMC_ROOT=C:\OpenModelica1.27.0-64bit"
           if exist T:\windows_native_server rmdir /s /q T:\windows_native_server
           mkdir T:\windows_native_server\omc-bin
           mkdir T:\windows_native_server\mingw-bin
