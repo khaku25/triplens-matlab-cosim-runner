@@ -247,7 +247,7 @@ jobs:
             -r thermo_server\requirements-live.txt
           python -c "from opcua import Client; print('PYTHON_OPCUA_ADAPTER_READY')"
 
-      - name: Start native Windows OPC UA physical server
+      - name: Stage native Windows OPC UA physical server
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
@@ -261,30 +261,8 @@ jobs:
             $dir.FullName | Out-File $env:GITHUB_PATH -Append -Encoding utf8
             $env:PATH = "$($dir.FullName);$env:PATH"
           }
-          $stdout = Join-Path $serverDir 'openmodelica-native.stdout.log'
-          $stderr = Join-Path $serverDir 'openmodelica-native.stderr.log'
-          $result = Join-Path $serverDir 'TripLens_Native_OPCUA_res.csv'
-          $process = Start-Process -FilePath $exe.FullName -WorkingDirectory $serverDir `
-            -ArgumentList @('-embeddedServer=opc-ua','-embeddedServerPort=4841',"-r=$result") `
-            -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
-          "TRIPLENS_OPCUA_SERVER_PID=$($process.Id)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
           "TRIPLENS_OPCUA_SERVER_DIR=$serverDir" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
-          $deadline = [DateTime]::UtcNow.AddSeconds(60)
-          $ready = $false
-          while ([DateTime]::UtcNow -lt $deadline -and -not $ready) {
-            if ($process.HasExited) {
-              Get-Content $stdout,$stderr -ErrorAction SilentlyContinue
-              throw "Native server exited before OPC UA connection: $($process.ExitCode)"
-            }
-            try {
-              $tcp = [Net.Sockets.TcpClient]::new()
-              $tcp.Connect($env:TRIPLENS_OPCUA_HOST,[int]$env:TRIPLENS_OPCUA_PORT)
-              $ready = $tcp.Connected
-              $tcp.Dispose()
-            } catch { Start-Sleep -Milliseconds 250 }
-          }
-          if (-not $ready) { throw 'Native OPC UA port did not become ready' }
-          'WINDOWS_NATIVE_OPCUA_SERVER_READY'
+          'WINDOWS_NATIVE_OPCUA_SERVER_STAGED'
 
       - name: Run actual MATLAB ECMS OPC UA command and feedback loop
         uses: matlab-actions/run-command@v3
@@ -315,7 +293,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path outputs\matlab-native-opcua | Out-Null
           if ($env:TRIPLENS_OPCUA_SERVER_DIR) {
-            Copy-Item "$env:TRIPLENS_OPCUA_SERVER_DIR\openmodelica-native.*.log" `
+            Copy-Item "$env:TRIPLENS_OPCUA_SERVER_DIR\openmodelica-native*.log" `
               outputs\matlab-native-opcua -ErrorAction SilentlyContinue
           }
 
@@ -337,4 +315,13 @@ jobs:
         run: |
           if ($env:TRIPLENS_OPCUA_SERVER_PID) {
             Stop-Process -Id ([int]$env:TRIPLENS_OPCUA_SERVER_PID) -Force -ErrorAction SilentlyContinue
+          }
+          if ($env:TRIPLENS_OPCUA_SERVER_DIR) {
+            $pidFile = Join-Path $env:TRIPLENS_OPCUA_SERVER_DIR 'active-opcua-server.pid'
+            if (Test-Path $pidFile) {
+              $activePid = (Get-Content $pidFile -Raw).Trim()
+              if ($activePid -match '^\d+$') {
+                Stop-Process -Id ([int]$activePid) -Force -ErrorAction SilentlyContinue
+              }
+            }
           }

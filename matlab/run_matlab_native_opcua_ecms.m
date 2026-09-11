@@ -34,6 +34,12 @@ signal = signalContract();
 [ecmsModelPath,ecmsModelName,ecmsBlockCount] = inspectSstFreeEcms();
 [schedule,ecmsProof] = buildAndRunEcmsCommand(repoRoot,stopTime,commandTime);
 
+% The native OpenModelica executable has a finite wait window before the
+% first OPC UA session.  Simulink model validation can exceed that window
+% on a hosted runner, so launch the physical server only after the ECMS
+% command schedule has been generated and validated.
+launchFreshNativeServer(repoRoot);
+
 client = [];
 nativeClientError = '';
 clientImplementation = 'MATLAB_R2026A_INDUSTRIAL_COMMUNICATION_TOOLBOX';
@@ -216,6 +222,18 @@ proof = struct('simulation_pass',true,'sample_time_s',Ts, ...
     'command_time_s',commandTime,'gt_breaker_closed_before',1, ...
     'gt_breaker_closed_after',0,'trip_definition', ...
     'TRIP_SUCCESS_IFF_ASSOCIATED_BREAKER_CLOSED_FEEDBACK_EQUALS_0');
+end
+
+function launchFreshNativeServer(repoRoot)
+launcher = fullfile(repoRoot,'matlab','start_native_opcua_server.ps1');
+assert(isfile(launcher),'TripLens:NativeServerLauncherMissing', ...
+    'Native OPC UA server launcher missing: %s',launcher);
+command = sprintf(['powershell -NoProfile -ExecutionPolicy Bypass ' ...
+    '-File "%s"'],launcher);
+[status,output] = system(command);
+fprintf('%s',output);
+assert(status == 0,'TripLens:NativeServerLaunchFailed', ...
+    'Native OPC UA server launch failed with exit code %d.',status);
 end
 
 function client = connectWithRetry(host,port,timeoutSeconds)
