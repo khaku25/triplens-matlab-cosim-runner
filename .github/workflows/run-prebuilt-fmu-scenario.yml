@@ -5,14 +5,14 @@ on:
     branches: [main]
     paths:
       - 'ci/cvode/run_prebuilt_scenario.py'
-      - 'scenarios/prebuilt/**'
+      - 'scenarios/prebuilt/gt_boundary_derate_smoke.json'
       - '.github/workflows/run-prebuilt-fmu-scenario.yml'
   workflow_dispatch:
     inputs:
       scenario_path:
         description: Versioned JSON scenario; changing it does not rebuild the FMU
         required: true
-        default: scenarios/prebuilt/gt_boundary_st_trip_smoke.json
+        default: scenarios/prebuilt/gt_boundary_derate_smoke.json
       source_run_id:
         description: Successful immutable CVODE FMU build run
         required: true
@@ -37,7 +37,7 @@ jobs:
     env:
       TRIPLENS_USE_NATIVE_SEED: '1'
       TRIPLENS_RETAIN_VALIDATED_NLS_GUESS: '1'
-      SCENARIO_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.scenario_path || 'scenarios/prebuilt/gt_boundary_st_trip_smoke.json' }}
+      SCENARIO_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.scenario_path || 'scenarios/prebuilt/gt_boundary_derate_smoke.json' }}
       SOURCE_RUN_ID: ${{ github.event_name == 'workflow_dispatch' && inputs.source_run_id || '34311992702' }}
       SOURCE_ARTIFACT: ${{ github.event_name == 'workflow_dispatch' && inputs.source_artifact || 'current-3input-cvode-linux-2' }}
     steps:
