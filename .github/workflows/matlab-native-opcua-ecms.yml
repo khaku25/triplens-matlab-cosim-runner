@@ -1,9 +1,9 @@
-name: MATLAB ECMS GT Trip Fast Trend 3.1
+name: MATLAB ECMS GT Trip Fast Trend 3.1 V2
 
 on:
   push:
     branches:
-      - codex/gt-trip-button-fast-trend-20260911
+      - codex/gt-trip-button-fast-trend-v2-20260911
     paths:
       - matlab/run_matlab_gt_trip_trend.m
       - matlab/gt_trip_trend_opcua_client.py
@@ -35,7 +35,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: khaku25/triplens-thermosyspro-cloud-runner
-          ref: codex/live-main-fmu-ecms-20260910
+          ref: codex/native-gt-trip-cmd-publish-20260911
           path: thermo_server
           persist-credentials: false
 
@@ -77,7 +77,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: khaku25/triplens-thermosyspro-cloud-runner
-          ref: codex/live-main-fmu-ecms-20260910
+          ref: codex/native-gt-trip-cmd-publish-20260911
           path: thermo_server
           persist-credentials: false
 
@@ -204,7 +204,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: khaku25/triplens-thermosyspro-cloud-runner
-          ref: codex/live-main-fmu-ecms-20260910
+          ref: codex/native-gt-trip-cmd-publish-20260911
           path: thermo_server
           persist-credentials: false
 
@@ -303,7 +303,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: matlab-ecms-gt-trip-fast-trend-${{ github.run_number }}
+          name: matlab-ecms-gt-trip-fast-trend-v2-${{ github.run_number }}
           path: |
             outputs/matlab-native-opcua/**
             outputs/trip_breaker_semantics_report.json
