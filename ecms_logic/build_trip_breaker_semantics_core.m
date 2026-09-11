@@ -8,6 +8,9 @@ function build_trip_breaker_semantics_core()
 %
 % This core is an electrical-state actuator contract. It does not synthesize
 % process physics and it does not treat reduced MW/flow/temperature as a Trip.
+% A separate feedback path exposes an unexpected 52GT-open-while-running
+% condition. That observed condition, rather than the OPEN command itself,
+% becomes the downstream GT Trip request used by the physical co-simulation.
 
 repoRoot=getenv('GITHUB_WORKSPACE');
 if isempty(repoRoot), repoRoot=fileparts(fileparts(mfilename('fullpath'))); end
@@ -26,7 +29,7 @@ set_param(modelName,'SolverType','Fixed-step','Solver','FixedStepDiscrete', ...
 
 inputs={'gt_trip_request','st_trip_request','fwp_hp_trip_request','fwp_ip_trip_request', ...
     'fwp_lp_trip_request','cb_in_a_trip_request','cb_in_b_trip_request','cb_tie_ab_trip_request', ...
-    'cb_52gt_direct_trip','cb_52st_direct_trip','gt_derating_active'};
+    'cb_52gt_direct_trip','cb_52st_direct_trip','gt_derating_active','gt_in_service'};
 for k=1:numel(inputs)
     y=30+(k-1)*45;
     add_block('simulink/Sources/In1',[modelName '/' inputs{k}], ...
@@ -36,40 +39,58 @@ end
 sub=[modelName '/Breaker_State_Actuator'];
 add_block('simulink/Ports & Subsystems/Subsystem',sub,'Position',[350 80 720 560]);
 buildActuator(sub,Ts);
-for k=1:numel(inputs)
+for k=1:11
     add_line(modelName,[inputs{k} '/1'],['Breaker_State_Actuator/' num2str(k)],'autorouting','on');
 end
 
 outputs={'cb_52gt_closed','cb_52st_closed','vcb_a01_closed','vcb_b01_closed','vcb_a02_closed', ...
-    'cb_in_a_closed','cb_in_b_closed','cb_tie_ab_closed'};
+    'cb_in_a_closed','cb_in_b_closed','cb_tie_ab_closed','gt_trip_from_52gt_open'};
 for k=1:numel(outputs)
     y=80+(k-1)*55;
     add_block('simulink/Sinks/Out1',[modelName '/' outputs{k}], ...
         'Port',num2str(k),'OutDataTypeStr','boolean','Position',[850 y 1040 y+22]);
-    add_line(modelName,['Breaker_State_Actuator/' num2str(k)],[outputs{k} '/1'],'autorouting','on');
+    if k<=8
+        add_line(modelName,['Breaker_State_Actuator/' num2str(k)],[outputs{k} '/1'],'autorouting','on');
+    end
 end
+
+% Detect the actual breaker feedback after the stateful actuator has opened.
+% gt_in_service is an explicit scenario/precondition input, so a breaker that
+% is open while the unit is already out of service cannot create a false Trip.
+notClosed=[modelName '/Not_52GT_Closed'];
+openWhileRunning=[modelName '/52GT_Open_While_Running'];
+add_block('simulink/Logic and Bit Operations/Logical Operator',notClosed, ...
+    'Operator','NOT','Position',[750 525 795 555]);
+add_block('simulink/Logic and Bit Operations/Logical Operator',openWhileRunning, ...
+    'Operator','AND','Inputs','2','Position',[805 520 840 565]);
+add_line(modelName,'Breaker_State_Actuator/1','Not_52GT_Closed/1','autorouting','on');
+add_line(modelName,'Not_52GT_Closed/1','52GT_Open_While_Running/1','autorouting','on');
+add_line(modelName,'gt_in_service/1','52GT_Open_While_Running/2','autorouting','on');
+add_line(modelName,'52GT_Open_While_Running/1','gt_trip_from_52gt_open/1','autorouting','on');
 
 set_param(modelName,'SimulationCommand','update');
 save_system(modelName,modelPath);
 
 % Regression matrix. All simulations begin with breakers CLOSED=1.
 checks=struct();
-checks.baseline = runCase(modelName,inputs,[],outputs,[1 1 1 1 1 1 1 1]);
-checks.gt_trip = runCase(modelName,inputs,{'gt_trip_request'},outputs,[0 1 1 1 1 1 1 1]);
-checks.st_trip = runCase(modelName,inputs,{'st_trip_request'},outputs,[1 0 1 1 1 1 1 1]);
-checks.fwp_hp_trip = runCase(modelName,inputs,{'fwp_hp_trip_request'},outputs,[1 1 0 1 1 1 1 1]);
-checks.fwp_ip_trip = runCase(modelName,inputs,{'fwp_ip_trip_request'},outputs,[1 1 1 0 1 1 1 1]);
-checks.fwp_lp_trip = runCase(modelName,inputs,{'fwp_lp_trip_request'},outputs,[1 1 1 1 0 1 1 1]);
-checks.in_a_trip = runCase(modelName,inputs,{'cb_in_a_trip_request'},outputs,[1 1 1 1 1 0 1 1]);
-checks.in_b_trip = runCase(modelName,inputs,{'cb_in_b_trip_request'},outputs,[1 1 1 1 1 1 0 1]);
-checks.tie_trip = runCase(modelName,inputs,{'cb_tie_ab_trip_request'},outputs,[1 1 1 1 1 1 1 0]);
-checks.direct_52gt_trip = runCase(modelName,inputs,{'cb_52gt_direct_trip'},outputs,[0 1 1 1 1 1 1 1]);
-checks.direct_52st_trip = runCase(modelName,inputs,{'cb_52st_direct_trip'},outputs,[1 0 1 1 1 1 1 1]);
-checks.derating_keeps_breakers_closed = runCase(modelName,inputs,{'gt_derating_active'},outputs,[1 1 1 1 1 1 1 1]);
+checks.baseline = runCase(modelName,inputs,[],outputs,[1 1 1 1 1 1 1 1 0]);
+checks.gt_trip = runCase(modelName,inputs,{'gt_trip_request'},outputs,[0 1 1 1 1 1 1 1 0]);
+checks.st_trip = runCase(modelName,inputs,{'st_trip_request'},outputs,[1 0 1 1 1 1 1 1 0]);
+checks.fwp_hp_trip = runCase(modelName,inputs,{'fwp_hp_trip_request'},outputs,[1 1 0 1 1 1 1 1 0]);
+checks.fwp_ip_trip = runCase(modelName,inputs,{'fwp_ip_trip_request'},outputs,[1 1 1 0 1 1 1 1 0]);
+checks.fwp_lp_trip = runCase(modelName,inputs,{'fwp_lp_trip_request'},outputs,[1 1 1 1 0 1 1 1 0]);
+checks.in_a_trip = runCase(modelName,inputs,{'cb_in_a_trip_request'},outputs,[1 1 1 1 1 0 1 1 0]);
+checks.in_b_trip = runCase(modelName,inputs,{'cb_in_b_trip_request'},outputs,[1 1 1 1 1 1 0 1 0]);
+checks.tie_trip = runCase(modelName,inputs,{'cb_tie_ab_trip_request'},outputs,[1 1 1 1 1 1 1 0 0]);
+checks.direct_52gt_trip_out_of_service = runCase(modelName,inputs,{'cb_52gt_direct_trip'},outputs,[0 1 1 1 1 1 1 1 0]);
+checks.running_52gt_open_causes_gt_trip = runCase(modelName,inputs, ...
+    {'cb_52gt_direct_trip','gt_in_service'},outputs,[0 1 1 1 1 1 1 1 1]);
+checks.direct_52st_trip = runCase(modelName,inputs,{'cb_52st_direct_trip'},outputs,[1 0 1 1 1 1 1 1 0]);
+checks.derating_keeps_breakers_closed = runCase(modelName,inputs,{'gt_derating_active'},outputs,[1 1 1 1 1 1 1 1 0]);
 
 % Common-protection resolved requests are tested together: GT request already
 % causes ST request in Common_Trip_Matrix. This case proves both breakers open.
-checks.gt_with_st_intertrip = runCase(modelName,inputs,{'gt_trip_request','st_trip_request'},outputs,[0 0 1 1 1 1 1 1]);
+checks.gt_with_st_intertrip = runCase(modelName,inputs,{'gt_trip_request','st_trip_request'},outputs,[0 0 1 1 1 1 1 1 0]);
 
 pass=all(structfun(@(x)logical(x),checks));
 report=struct();
@@ -82,6 +103,8 @@ report.required_breaker_closed_value_after_trip=0;
 report.derating_definition='PROCESS_VALUE_REDUCTION_WITH_BREAKER_REMAINING_CLOSED';
 report.derating_opens_breaker=false;
 report.gt_trip_intertrip_policy='GT request is resolved upstream to GT+ST requests; therefore 52GT.CLOSED=0 and 52ST.CLOSED=0';
+report.breaker_open_trip_policy='GT_IN_SERVICE AND NOT 52GT.CLOSED -> GT_TRIP_FROM_52GT_OPEN';
+report.breaker_open_trip_status='VPP_PROVISIONAL_NOT_PLANT_LOGIC';
 report.st_trip_policy='52ST.CLOSED=0 only';
 report.drum_hh_policy='resolved upstream as ST request only -> 52ST.CLOSED=0';
 report.drum_ll_policy='resolved upstream as GT+ST requests -> both generator breakers CLOSED=0';

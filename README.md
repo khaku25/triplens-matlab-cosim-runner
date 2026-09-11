@@ -4,6 +4,18 @@ Experimental runner for a separate TripLens digital-twin track.
 
 This repository is intentionally isolated from `triplens-thermosyspro-cloud-runner` so the existing submission/demo pipeline remains untouched.
 
+## Hosted MATLAB / OPC UA 52GT scenario
+
+`matlab-native-opcua-ecms.yml` runs the pinned ThermoSysPro 3.1 combined-cycle
+model with the TripLens HP/LP bypass and spray patch. The current scenario is:
+
+`GT in service -> 52GT OPEN command -> observed 52GT.CLOSED 1->0 -> derived GT Trip -> OPC UA -> native ThermoSysPro response`
+
+The OPEN command, breaker feedback, derived protection request, OPC UA
+readback and physical latch are separate captured fields. Direct GT Trip is
+not injected as the root cause. The breaker-open-to-Trip policy is a
+provisional VPP rule; no actual plant ECMS logic or plant network is used.
+
 ## Goal
 
 Run the co-simulation on the user's actual Windows MATLAB installation through a GitHub self-hosted runner, then connect:
