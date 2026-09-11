@@ -171,6 +171,8 @@ def validate(rows: list[dict[str, float | int]], command_time_s: float) -> dict[
             errors.append("GT Trip input was true before the ECMS button command")
         if not any(row["gt_trip_command_readback"] == 1 for row in rows[post_indices[0]:]):
             errors.append("ECMS GT Trip command was not read back through OPC UA")
+        if not any(row["model_gt_trip_command"] == 1 for row in rows[post_indices[0]:]):
+            errors.append("published Modelica GT_TRIP_CMD did not assert")
         if not any(row["gt_trip_latch"] == 1 for row in rows[post_indices[0]:]):
             errors.append("Modelica GT Trip latch did not assert")
         if not any(row["breaker_52gt_closed"] == 0 for row in rows[post_indices[0]:]):
@@ -203,11 +205,18 @@ def validate(rows: list[dict[str, float | int]], command_time_s: float) -> dict[
         }
 
     command_edge = first_edge(rows, "gt_trip_command_readback", lambda value: value == 1)
+    published_command_edge = first_edge(rows, "model_gt_trip_command", lambda value: value == 1)
     latch_edge = first_edge(rows, "gt_trip_latch", lambda value: value == 1)
     breaker_edge = first_edge(rows, "breaker_52gt_closed", lambda value: value == 0)
-    if any(edge is None for edge in (command_edge, latch_edge, breaker_edge)):
+    if any(
+        edge is None
+        for edge in (command_edge, published_command_edge, latch_edge, breaker_edge)
+    ):
         errors.append("direct GT Trip causal-chain edge is missing")
-    elif not (command_time_s <= command_edge <= latch_edge <= breaker_edge):
+    elif not (
+        command_time_s <= command_edge <= published_command_edge <= breaker_edge
+        and command_edge <= latch_edge <= breaker_edge
+    ):
         errors.append("GT Trip button-to-latch-to-52GT causal order is invalid")
 
     return {
@@ -226,6 +235,7 @@ def validate(rows: list[dict[str, float | int]], command_time_s: float) -> dict[
         "values_received": len(rows) * len(SIGNALS),
         "button_press_time_s": command_time_s,
         "opcua_command_readback_time_s": command_edge,
+        "model_gt_trip_command_time_s": published_command_edge,
         "model_trip_latch_time_s": latch_edge,
         "breaker_52gt_open_feedback_time_s": breaker_edge,
         "changed_physical_fields": changed,
