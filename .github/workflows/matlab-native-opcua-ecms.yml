@@ -239,6 +239,14 @@ jobs:
             Industrial_Communication_Toolbox
           cache: true
 
+      - name: Install pinned live OPC UA transport adapter
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m pip install --disable-pip-version-check `
+            -r thermo_server\requirements-live.txt
+          python -c "from opcua import Client; print('PYTHON_OPCUA_ADAPTER_READY')"
+
       - name: Start native Windows OPC UA physical server
         shell: powershell
         run: |

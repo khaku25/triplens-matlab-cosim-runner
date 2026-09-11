@@ -34,65 +34,90 @@ signal = signalContract();
 [ecmsModelPath,ecmsModelName,ecmsBlockCount] = inspectSstFreeEcms();
 [schedule,ecmsProof] = buildAndRunEcmsCommand(repoRoot,stopTime,commandTime);
 
-client = connectWithRetry(host,port,180);
-clientCleanup = onCleanup(@() safeDisconnect(client)); %#ok<NASGU>
-required = [{'vppExternalTripCommandNative','OpenModelica.step', ...
-    'OpenModelica.time'}, {signal.node_name}];
-nodes = waitForNodes(client,required,60);
-commandNode = nodes('vppExternalTripCommandNative');
-stepNode = nodes('OpenModelica.step');
-timeNode = nodes('OpenModelica.time');
-signalNodes = cellfun(@(name) nodes(name),{signal.node_name}, ...
-    'UniformOutput',false);
-signalNodes = [signalNodes{:}];
-
-fieldNames = [{'sequence','time_s','ecms_command_sent', ...
-    'gt_trip_command_readback','ecms_cb_52gt_closed','round_trip_ms'}, ...
-    {signal.field}];
-rows = zeros(0,numel(fieldNames));
-current = scalarNumber(readValue(client,timeNode));
-commandWritten = scalarNumber(readValue(client,commandNode)) >= 0.5;
-
-while current < stopTime - stepSize/2
-    command = scheduleValue(schedule.time_s,schedule.gt_trip_request,current);
-    if command && ~commandWritten
-        writeValue(client,commandNode,1.0);
-        commandWritten = true;
-    end
-    sent = tic;
-    nextTime = requestStep(client,stepNode,timeNode,current,30);
-    readback = scalarNumber(readValue(client,commandNode)) >= 0.5;
-    [rawValues,~,qualities] = readValue(client,signalNodes);
-    assert(allQualityGood(qualities),'TripLens:BadOPCUAQuality', ...
-        'OPC UA returned a non-Good physical value.');
-    values = numericVector(rawValues);
-    assert(numel(values) == numel(signal),'TripLens:SignalCount');
-    assert(all(isfinite(values)),'TripLens:NonFinitePhysicalValue');
-    breakerClosed = scheduleValue(schedule.time_s, ...
-        schedule.cb_52gt_closed,nextTime);
-    rows(end+1,:) = [size(rows,1),nextTime,double(command), ... %#ok<AGROW>
-        double(readback),double(breakerClosed),toc(sent)*1000,values];
-    current = nextTime;
+client = [];
+nativeClientError = '';
+clientImplementation = 'MATLAB_R2026A_INDUSTRIAL_COMMUNICATION_TOOLBOX';
+try
+    client = connectWithRetry(host,port,180);
+catch ME
+    if ~isSecretServiceUnavailable(ME), rethrow(ME); end
+    nativeClientError = char(string(ME.message));
+    clientImplementation = 'PYTHON_OPCUA_ADAPTER_CONTROLLED_BY_MATLAB_R2026A';
+    fprintf(['MATLAB_NATIVE_OPCUA_UNAVAILABLE reason=SecretService; ' ...
+        'starting live OPC UA transport adapter\n']);
 end
 
-% Release the native server from its final wait so it can terminate normally.
-writeValue(client,stepNode,true);
-safeDisconnect(client);
-clear clientCleanup;
+if isempty(client)
+    capture = runPythonOpcuaAdapter(repoRoot,outDir,host,port, ...
+        stopTime,stepSize,commandTime,schedule);
+else
+    clientCleanup = onCleanup(@() safeDisconnect(client)); %#ok<NASGU>
+    required = [{'vppExternalTripCommandNative','OpenModelica.step', ...
+        'OpenModelica.time'}, {signal.node_name}];
+    nodes = waitForNodes(client,required,60);
+    commandNode = nodes('vppExternalTripCommandNative');
+    stepNode = nodes('OpenModelica.step');
+    timeNode = nodes('OpenModelica.time');
+    signalNodes = cellfun(@(name) nodes(name),{signal.node_name}, ...
+        'UniformOutput',false);
+    signalNodes = [signalNodes{:}];
 
-capture = array2table(rows,'VariableNames',fieldNames);
+    fieldNames = [{'sequence','time_s','ecms_command_sent', ...
+        'gt_trip_command_readback','ecms_cb_52gt_closed','round_trip_ms'}, ...
+        {signal.field}];
+    rows = zeros(0,numel(fieldNames));
+    current = scalarNumber(readValue(client,timeNode));
+    commandWritten = scalarNumber(readValue(client,commandNode)) >= 0.5;
+
+    while current < stopTime - stepSize/2
+        command = scheduleValue(schedule.time_s,schedule.gt_trip_request,current);
+        if command && ~commandWritten
+            writeValue(client,commandNode,1.0);
+            commandWritten = true;
+        end
+        sent = tic;
+        nextTime = requestStep(client,stepNode,timeNode,current,30);
+        readback = scalarNumber(readValue(client,commandNode)) >= 0.5;
+        [rawValues,~,qualities] = readValue(client,signalNodes);
+        assert(allQualityGood(qualities),'TripLens:BadOPCUAQuality', ...
+            'OPC UA returned a non-Good physical value.');
+        values = numericVector(rawValues);
+        assert(numel(values) == numel(signal),'TripLens:SignalCount');
+        assert(all(isfinite(values)),'TripLens:NonFinitePhysicalValue');
+        breakerClosed = scheduleValue(schedule.time_s, ...
+            schedule.cb_52gt_closed,nextTime);
+        rows(end+1,:) = [size(rows,1),nextTime,double(command), ... %#ok<AGROW>
+            double(readback),double(breakerClosed),toc(sent)*1000,values];
+        current = nextTime;
+    end
+
+    % Release the native server from its final wait so it can terminate normally.
+    writeValue(client,stepNode,true);
+    safeDisconnect(client);
+    clear clientCleanup;
+    capture = array2table(rows,'VariableNames',fieldNames);
+end
+
 writetable(capture,fullfile(outDir,'ECMS-native-physical.csv'));
 save(fullfile(outDir,'MATLAB-ECMS-OPCUA-received.mat'), ...
     'capture','schedule','ecmsProof','-v7.3');
 
 report = validateCapture(capture,signal,commandTime);
 report.proof_type = 'MATLAB_SIMULINK_ECMS_TO_NATIVE_OPENMODELICA_OPCUA';
-report.client_implementation = 'MATLAB_R2026A_INDUSTRIAL_COMMUNICATION_TOOLBOX';
+report.client_implementation = clientImplementation;
+report.native_matlab_client_error = nativeClientError;
 report.command_source = 'SIMULINK_ECMS_TRIP_BREAKER_SEMANTICS_CORE';
-report.command_path = ['Simulink gt_trip_request -> MATLAB OPC UA write -> ' ...
-    'native OpenModelica state'];
-report.feedback_path = ['native OpenModelica solved variables -> MATLAB OPC UA read ' ...
-    '-> ECMS receive table'];
+if isempty(nativeClientError)
+    report.command_path = ['Simulink gt_trip_request -> MATLAB OPC UA write -> ' ...
+        'native OpenModelica state'];
+    report.feedback_path = ['native OpenModelica solved variables -> ' ...
+        'MATLAB OPC UA read -> ECMS receive table'];
+else
+    report.command_path = ['Simulink gt_trip_request -> MATLAB-controlled ' ...
+        'Python OPC UA write -> native OpenModelica state'];
+    report.feedback_path = ['native OpenModelica solved variables -> Python OPC UA read ' ...
+        '-> MATLAB ECMS receive table'];
+end
 report.csv_role = 'POST_RECEIVE_AUDIT_ONLY';
 report.ecms_model = ecmsModelName;
 report.ecms_model_file = [ecmsModelName '.slx'];
@@ -113,7 +138,8 @@ assert(strcmp(report.status,'PASS'),'TripLens:MATLABOPCUAValidation', ...
     '%s',strjoin(report.errors,'; '));
 fprintf('MATLAB_ECMS_NATIVE_OPCUA_PASS frames=%d values=%d changed_physical=%d\n', ...
     report.frames_received,report.values_received,report.changed_physical_fields);
-fprintf('ECMS_MODEL=%s SST=0 OPCUA=MATLAB\n',ecmsModelPath);
+fprintf('ECMS_MODEL=%s SST=0 OPCUA_CLIENT=%s\n', ...
+    ecmsModelPath,clientImplementation);
 end
 
 function [path,name,count] = inspectSstFreeEcms()
@@ -194,21 +220,68 @@ end
 
 function client = connectWithRetry(host,port,timeoutSeconds)
 deadline = tic; last = []; client = [];
+endpoint = sprintf('opc.tcp://%s:%d',host,port);
 while toc(deadline) < timeoutSeconds
     try
-        client = opcua(host,port, ...
+        % Use the explicit endpoint URL.  This follows the current MATLAB
+        % client API and avoids the legacy host/port discovery overload.
+        client = opcua(endpoint, ...
             MessageSecurityMode="None",ChannelSecurityPolicy="None", ...
-            UseDiscoveryHostname=true,TrustServerTemporarily=true);
+            UseDiscoveryHostname=true);
         connect(client);
         return;
     catch ME
         last = ME;
         if ~isempty(client), safeDisconnect(client); end
+        if isSecretServiceUnavailable(ME), throwAsCaller(ME); end
         pause(0.25);
     end
 end
 if isempty(last), error('TripLens:OPCUATimeout','OPC UA server unavailable.'); end
 throwAsCaller(last);
+end
+
+function capture = runPythonOpcuaAdapter(repoRoot,outDir,host,port, ...
+        stopTime,stepSize,commandTime,schedule)
+% The hosted MATLAB image has no SecretService, which the toolbox client
+% initializes before opening a socket.  Keep MATLAB/Simulink as the command
+% owner and use the already validated OPC UA transport adapter only for the
+% wire protocol.  No physical value is sourced from CSV.
+adapter = fullfile(repoRoot,'thermo_server','scripts', ...
+    'native_ecms_opcua_client.py');
+assert(isfile(adapter),'TripLens:OPCUAAdapterMissing', ...
+    'Validated live OPC UA adapter missing: %s',adapter);
+schedulePath = fullfile(outDir,'ECMS-command-schedule.csv');
+writetable(schedule,schedulePath);
+commandEdge = find(schedule.gt_trip_request >= 0.5,1,'first');
+assert(~isempty(commandEdge),'TripLens:MissingECMSCommandEdge');
+adapterCommandTime = schedule.time_s(commandEdge);
+assert(abs(adapterCommandTime-commandTime) <= 1e-9, ...
+    'TripLens:ECMSCommandEdgeMismatch');
+endpoint = sprintf('opc.tcp://%s:%d',host,port);
+command = sprintf(['python "%s" --endpoint "%s" --stop-time %.17g ' ...
+    '--step-size %.17g --command-time %.17g --output-dir "%s"'], ...
+    adapter,endpoint,stopTime,stepSize,adapterCommandTime,outDir);
+[status,output] = system(command);
+fprintf('%s',output);
+assert(status == 0,'TripLens:OPCUAAdapterFailed', ...
+    'Live OPC UA transport adapter failed with exit code %d.',status);
+capturePath = fullfile(outDir,'ECMS-native-physical.csv');
+assert(isfile(capturePath),'TripLens:OPCUACaptureMissing');
+capture = readtable(capturePath,'VariableNamingRule','preserve');
+assert(height(capture) > 0,'TripLens:EmptyOPCUACapture');
+capture.ecms_cb_52gt_closed = arrayfun(@(t) scheduleValue( ...
+    schedule.time_s,schedule.cb_52gt_closed,t),capture.time_s);
+capture = movevars(capture,'ecms_cb_52gt_closed', ...
+    'After','gt_trip_command_readback');
+fprintf('MATLAB_RECEIVED_LIVE_OPCUA_CAPTURE frames=%d fields=%d\n', ...
+    height(capture),width(capture));
+end
+
+function tf = isSecretServiceUnavailable(ME)
+details = string(getReport(ME,'extended','hyperlinks','off'));
+tf = contains(details,'SecretService is not available', ...
+    'IgnoreCase',true);
 end
 
 function nodes = waitForNodes(client,names,timeoutSeconds)
