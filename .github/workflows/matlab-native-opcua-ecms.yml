@@ -1,9 +1,9 @@
-name: MATLAB ECMS GT Trip Trend 3.1
+name: MATLAB ECMS GT Trip Fast Trend 3.1
 
 on:
   push:
     branches:
-      - codex/gt-trip-button-trend-20260911
+      - codex/gt-trip-button-fast-trend-20260911
     paths:
       - matlab/run_matlab_gt_trip_trend.m
       - matlab/gt_trip_trend_opcua_client.py
@@ -15,15 +15,15 @@ permissions:
   actions: read
 
 concurrency:
-  group: matlab-ecms-gt-trip-trend-${{ github.ref }}
+  group: matlab-ecms-gt-trip-fast-trend-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   THERMOSYSPRO_COMMIT: db81ae1b5a6a85f6c6c7693244cafa6087e18ff5
   TRIPLENS_OPCUA_HOST: 127.0.0.1
   TRIPLENS_OPCUA_PORT: '4841'
-  TRIPLENS_OPCUA_STOP_TIME: '130'
-  TRIPLENS_OPCUA_STEP_SIZE: '0.1'
+  TRIPLENS_OPCUA_STOP_TIME: '70'
+  TRIPLENS_OPCUA_STEP_SIZE: '0.5'
   TRIPLENS_OPCUA_COMMAND_TIME: '10'
 
 jobs:
@@ -134,7 +134,7 @@ jobs:
           if errorlevel 1 exit /b 1
           "C:\Program Files\Git\cmd\git.exe" -C T:\thermo_server\vendor\ThermoSysPro checkout --detach %THERMOSYSPRO_COMMIT%
           if errorlevel 1 exit /b 1
-          python T:\thermo_server\scripts\render_modelica.py --external-trip-input --stop-time %TRIPLENS_OPCUA_STOP_TIME% --intervals 1300
+          python T:\thermo_server\scripts\render_modelica.py --external-trip-input --stop-time %TRIPLENS_OPCUA_STOP_TIME% --intervals 140
           if errorlevel 1 exit /b 1
           python T:\thermo_server\scripts\patch_turbine_bypass_model.py ^
             --source T:\thermo_server\vendor\ThermoSysPro\ThermoSysPro\Examples\CombinedCyclePowerPlant\CombinedCycle_TripTAC.mo
@@ -303,7 +303,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: matlab-ecms-gt-trip-trend-${{ github.run_number }}
+          name: matlab-ecms-gt-trip-fast-trend-${{ github.run_number }}
           path: |
             outputs/matlab-native-opcua/**
             outputs/trip_breaker_semantics_report.json
