@@ -16,11 +16,11 @@ on:
       source_run_id:
         description: Successful immutable CVODE FMU build run
         required: true
-        default: '34233967732'
+        default: '34311992702'
       source_artifact:
         description: Prebuilt Linux FMU artifact name
         required: true
-        default: cvode-build-linux64-4
+        default: current-3input-cvode-linux-2
 
 permissions:
   contents: read
@@ -38,8 +38,8 @@ jobs:
       TRIPLENS_USE_NATIVE_SEED: '1'
       TRIPLENS_RETAIN_VALIDATED_NLS_GUESS: '1'
       SCENARIO_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.scenario_path || 'scenarios/prebuilt/gt_boundary_st_trip_smoke.json' }}
-      SOURCE_RUN_ID: ${{ github.event_name == 'workflow_dispatch' && inputs.source_run_id || '34233967732' }}
-      SOURCE_ARTIFACT: ${{ github.event_name == 'workflow_dispatch' && inputs.source_artifact || 'cvode-build-linux64-4' }}
+      SOURCE_RUN_ID: ${{ github.event_name == 'workflow_dispatch' && inputs.source_run_id || '34311992702' }}
+      SOURCE_ARTIFACT: ${{ github.event_name == 'workflow_dispatch' && inputs.source_artifact || 'current-3input-cvode-linux-2' }}
     steps:
       - uses: actions/checkout@v4
         with:
