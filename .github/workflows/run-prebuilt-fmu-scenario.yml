@@ -1,0 +1,101 @@
+name: Run Prebuilt FMU Scenario (No OpenModelica)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ci/cvode/run_prebuilt_scenario.py'
+      - 'scenarios/prebuilt/**'
+      - '.github/workflows/run-prebuilt-fmu-scenario.yml'
+  workflow_dispatch:
+    inputs:
+      scenario_path:
+        description: Versioned JSON scenario; changing it does not rebuild the FMU
+        required: true
+        default: scenarios/prebuilt/gt_boundary_st_trip_smoke.json
+      source_run_id:
+        description: Successful immutable CVODE FMU build run
+        required: true
+        default: '34233967732'
+      source_artifact:
+        description: Prebuilt Linux FMU artifact name
+        required: true
+        default: cvode-build-linux64-4
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: prebuilt-fmu-scenario-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  simulate-without-openmodelica:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      TRIPLENS_USE_NATIVE_SEED: '1'
+      TRIPLENS_RETAIN_VALIDATED_NLS_GUESS: '1'
+      SCENARIO_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.scenario_path || 'scenarios/prebuilt/gt_boundary_st_trip_smoke.json' }}
+      SOURCE_RUN_ID: ${{ github.event_name == 'workflow_dispatch' && inputs.source_run_id || '34233967732' }}
+      SOURCE_ARTIFACT: ${{ github.event_name == 'workflow_dispatch' && inputs.source_artifact || 'cvode-build-linux64-4' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download the already-compiled physical model
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.SOURCE_ARTIFACT }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+          github-token: ${{ github.token }}
+          path: prebuilt
+
+      - name: Install FMI importer only
+        run: python3 -m pip install 'fmpy==0.3.22'
+
+      - name: Prove OpenModelica is absent
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v omc >/dev/null 2>&1; then
+            echo 'Unexpected OpenModelica compiler on scenario runner' >&2
+            exit 1
+          fi
+          echo 'OPENMODELICA_ABSENT_PASS'
+
+      - name: Run external-input scenario against the prebuilt FMU
+        shell: bash
+        run: |
+          set -euo pipefail
+          fmu="$(find prebuilt -type f -name 'TripLens_CombinedCycle_TripTAC_CoSim_linux64.fmu' -print -quit)"
+          test -n "$fmu"
+          test -f "$SCENARIO_PATH"
+          python3 ci/cvode/run_prebuilt_scenario.py \
+            --fmu "$fmu" \
+            --scenario "$SCENARIO_PATH" \
+            --out results
+
+      - name: Assert compile-free execution contract
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          report=json.load(open('results/scenario-report.json', encoding='utf-8'))
+          assert report['status']=='pass'
+          assert report['openmodelica_installed_or_invoked'] is False
+          assert report['actual_fmi_cosimulation'] is True
+          assert report['csv_replay'] is False
+          print('COMPILE_FREE_SCENARIO_CONTRACT_PASS')
+          PY
+
+      - name: Upload physical scenario result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prebuilt-fmu-scenario-${{ github.run_number }}
+          path: results/
+          if-no-files-found: warn
+          retention-days: 30
