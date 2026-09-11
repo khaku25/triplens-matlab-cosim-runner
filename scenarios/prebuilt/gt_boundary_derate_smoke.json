@@ -1,0 +1,30 @@
+{
+  "name": "GT exhaust-boundary derate smoke",
+  "stop_time_s": 5.0,
+  "step_s": 0.1,
+  "initial_inputs": {
+    "gtExhaustFlowCmd": 606.94,
+    "gtExhaustTemperatureCmd": 893.75,
+    "stTripCmd": 0.0
+  },
+  "events": [
+    {
+      "time_s": 2.0,
+      "set": {
+        "gtExhaustFlowCmd": 150.0,
+        "gtExhaustTemperatureCmd": 550.0
+      }
+    }
+  ],
+  "outputs": [
+    "stElectricalPower",
+    "hpDrumLevel",
+    "ipDrumLevel",
+    "lpDrumLevel",
+    "hpDrumPressure",
+    "ipDrumPressure",
+    "lpDrumPressure",
+    "hpTurbineInletValveOpening",
+    "mpTurbineInletValveOpening"
+  ]
+}
