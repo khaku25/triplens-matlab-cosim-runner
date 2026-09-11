@@ -1,11 +1,12 @@
-name: MATLAB ECMS Native OPC UA Link
+name: MATLAB ECMS GT Trip Trend 3.1
 
 on:
   push:
     branches:
-      - codex/matlab-opcua-vpp-20260910
+      - codex/gt-trip-button-trend-20260911
     paths:
-      - matlab/run_matlab_native_opcua_ecms.m
+      - matlab/run_matlab_gt_trip_trend.m
+      - matlab/gt_trip_trend_opcua_client.py
       - .github/workflows/matlab-native-opcua-ecms.yml
   workflow_dispatch:
 
@@ -14,16 +15,16 @@ permissions:
   actions: read
 
 concurrency:
-  group: matlab-ecms-native-opcua-${{ github.ref }}
+  group: matlab-ecms-gt-trip-trend-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   THERMOSYSPRO_COMMIT: db81ae1b5a6a85f6c6c7693244cafa6087e18ff5
   TRIPLENS_OPCUA_HOST: 127.0.0.1
   TRIPLENS_OPCUA_PORT: '4841'
-  TRIPLENS_OPCUA_STOP_TIME: '2'
-  TRIPLENS_OPCUA_STEP_SIZE: '0.01'
-  TRIPLENS_OPCUA_COMMAND_TIME: '0.25'
+  TRIPLENS_OPCUA_STOP_TIME: '130'
+  TRIPLENS_OPCUA_STEP_SIZE: '0.1'
+  TRIPLENS_OPCUA_COMMAND_TIME: '10'
 
 jobs:
   prepare-modelica323:
@@ -133,7 +134,7 @@ jobs:
           if errorlevel 1 exit /b 1
           "C:\Program Files\Git\cmd\git.exe" -C T:\thermo_server\vendor\ThermoSysPro checkout --detach %THERMOSYSPRO_COMMIT%
           if errorlevel 1 exit /b 1
-          python T:\thermo_server\scripts\render_modelica.py --external-trip-input --stop-time %TRIPLENS_OPCUA_STOP_TIME% --intervals 200
+          python T:\thermo_server\scripts\render_modelica.py --external-trip-input --stop-time %TRIPLENS_OPCUA_STOP_TIME% --intervals 1300
           if errorlevel 1 exit /b 1
           python T:\thermo_server\scripts\patch_turbine_bypass_model.py ^
             --source T:\thermo_server\vendor\ThermoSysPro\ThermoSysPro\Examples\CombinedCyclePowerPlant\CombinedCycle_TripTAC.mo
@@ -194,7 +195,7 @@ jobs:
   matlab-opcua-windows:
     needs: build-native-windows
     runs-on: windows-2025
-    timeout-minutes: 70
+    timeout-minutes: 180
     steps:
       - name: Check out MATLAB ECMS repository
         uses: actions/checkout@v4
@@ -264,28 +265,29 @@ jobs:
           "TRIPLENS_OPCUA_SERVER_DIR=$serverDir" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
           'WINDOWS_NATIVE_OPCUA_SERVER_STAGED'
 
-      - name: Run actual MATLAB ECMS OPC UA command and feedback loop
+      - name: Run optimized ECMS GT Trip button and OPC UA trend
         uses: matlab-actions/run-command@v3
         with:
           command: >-
             addpath(fullfile(getenv('GITHUB_WORKSPACE'),'matlab'));
-            run_matlab_native_opcua_ecms
+            run_matlab_gt_trip_trend
 
-      - name: Verify received physical values and build dashboard
+      - name: Verify optimized trend evidence
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          if (-not (Test-Path outputs\matlab-native-opcua\ECMS-native-physical.csv)) {
-            throw 'MATLAB physical receive CSV missing'
+          $required = @(
+            'outputs\matlab-native-opcua\ECMS-GT-Trip-trend.csv',
+            'outputs\matlab-native-opcua\GT-Trip-trend.png',
+            'outputs\matlab-native-opcua\gt-trip-trend-proof.json'
+          )
+          foreach ($file in $required) {
+            if (-not (Test-Path $file)) { throw "Missing GT Trip trend evidence: $file" }
           }
-          if (-not (Test-Path outputs\matlab-native-opcua\native-opcua-proof.json)) {
-            throw 'MATLAB OPC UA proof missing'
-          }
-          python thermo_server\scripts\build_native_opcua_dashboard.py `
-            --capture outputs\matlab-native-opcua\ECMS-native-physical.csv `
-            --proof outputs\matlab-native-opcua\native-opcua-proof.json `
-            --output outputs\matlab-native-opcua\MATLAB-ECMS-native-dashboard.html
-          if ($LASTEXITCODE -ne 0) { throw 'Dashboard build failed' }
+          $proof = Get-Content 'outputs\matlab-native-opcua\gt-trip-trend-proof.json' -Raw | ConvertFrom-Json
+          if ($proof.status -ne 'PASS') { throw 'GT Trip trend proof did not pass' }
+          if ($proof.output_forcing -ne $false) { throw 'Output forcing must remain disabled' }
+          if ($proof.alarm_evaluation_enabled -ne $false) { throw 'Alarm evaluation must remain disabled' }
 
       - name: Preserve native server logs
         if: always()
@@ -301,7 +303,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: matlab-ecms-native-opcua-${{ github.run_number }}
+          name: matlab-ecms-gt-trip-trend-${{ github.run_number }}
           path: |
             outputs/matlab-native-opcua/**
             outputs/trip_breaker_semantics_report.json
