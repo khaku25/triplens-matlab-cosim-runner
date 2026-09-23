@@ -1,0 +1,48 @@
+name: Export Native Simulink Drawing
+
+on:
+  push:
+    branches: [codex/simulink-drawing-export-20260923]
+    paths:
+      - 'matlab/export_ecms_simulink_drawing.m'
+      - '.github/workflows/export-native-simulink-drawing.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  export:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Export actual Simulink editor geometry
+        shell: cmd
+        env:
+          TRIPLENS_ECMS_MODEL_PATH: ${{ vars.TRIPLENS_ECMS_MODEL_PATH }}
+          TRIPLENS_ECMS_INIT_SCRIPT: ${{ vars.TRIPLENS_ECMS_INIT_SCRIPT }}
+          TRIPLENS_COSIM_REPO_ROOT: ${{ github.workspace }}
+        run: |
+          "C:\Program Files\MATLAB\R2025b\bin\matlab.exe" -batch "addpath(fullfile(pwd,'matlab')); export_ecms_simulink_drawing"
+      - name: Publish native exports on this branch
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path simulink_export | Out-Null
+          Copy-Item outputs\simulink_drawing\TripLens_ECMS_DigitalTwin.svg simulink_export\TripLens_ECMS_DigitalTwin.svg -Force
+          Copy-Item outputs\simulink_drawing\TripLens_ECMS_DigitalTwin.png simulink_export\TripLens_ECMS_DigitalTwin.png -Force
+          Copy-Item outputs\simulink_drawing\top_level_block_positions.csv simulink_export\top_level_block_positions.csv -Force
+          Copy-Item outputs\simulink_drawing\export_report.json simulink_export\export_report.json -Force
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add simulink_export
+          if (-not (git diff --cached --quiet)) {
+            git commit -m "artifact: export native Simulink ECMS drawing"
+            git push
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-simulink-ecms-drawing
+          path: outputs/simulink_drawing/
+          if-no-files-found: error
+          retention-days: 30
